@@ -1,0 +1,44 @@
+import cv2
+import numpy as np
+import math
+
+img = cv2.imread('whateverimage.png')
+
+lowergreen = np.array([10,130,10])
+uppergreen = np.array([255,255,255])
+
+mask = cv2.inRange(img, lowergreen, uppergreen)
+res = cv2.bitwise_and(img,img, mask= mask)
+
+image = cv2.cvtColor(res, cv2.COLOR_BGR2GRAY)
+height = img.shape[0]
+width = img.shape[1]
+ret, image = cv2.threshold(image, 100, 255, cv2.THRESH_BINARY)
+
+#cv2.imshow('original',img)
+#cv2.imshow('img',image)
+#cv2.imshow('mask',mask)
+#cv2.imshow('res',res)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
+
+whites = np.sum(image == 255)
+#print(whites)
+
+################################################# find out how many cms a pixel is worth
+
+#it's also gonna depend on how the camera is pointing..
+#right now im considering the camera pointing straight down, so the drone is at the middle of the imagen
+
+HFOV = 70
+VFOV = 43
+dh = 10 #(meters)
+pxarea = height*width
+xaxis = 2*dh*math.tan(np.deg2rad(HFOV/2))
+yaxis = 2*dh*math.tan(np.deg2rad(VFOV/2))
+marea = xaxis*yaxis
+
+pxperm2 = pxarea/marea
+
+totalarea = whites/pxperm2
+print('the total area is', round(totalarea,2) ,'m^2')
