@@ -6,7 +6,9 @@ import matplotlib.pyplot as plt
 import sys
 import glob
 import os
+from scipy.sparse import lil_matrix
 from tqdm import tqdm
+from scipy.optimize import least_squares
 
 
 def match_and_extract_points(position, target, sift_threshold,
@@ -46,8 +48,8 @@ def match_and_extract_points(position, target, sift_threshold,
 
         # add the points to the world_points
         for match in matches[(position, target)]:
-            query = (matrix_idx[position[0], position[1]], match.queryIdx,position)
-            train = (matrix_idx[target[0], target[1]], match.trainIdx,target)
+            query = (matrix_idx[position[0], position[1]], match.queryIdx, position)
+            train = (matrix_idx[target[0], target[1]], match.trainIdx, target)
             if query not in point_world_idx:
                 if train not in point_world_idx:
                     # creates new point_world if neither keypoint is found in another point_world
@@ -174,7 +176,7 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0), 
             if j < w - 1:
                 if matrix_idx[i, j] >= 0 and matrix_idx[i, j + 1] >= 0:
                     matches, homographys_rel, point_world_idx, point_world = match_and_extract_points((i, j),
-                                                                                                      (i, j+1),
+                                                                                                      (i, j + 1),
                                                                                                       sift_threshold,
                                                                                                       matrix_idx,
                                                                                                       ransac_threshold,
@@ -185,25 +187,102 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0), 
                                                                                                       point_world_idx,
                                                                                                       point_world)
 
-    #calculate the homographys from the center image to each image
+    # calculate the homographys from the center image to each image
     homographys_abs = [None] * matrix_idx[matrix_idx != -255].size
     for i in range(h):
         for j in range(w):
             if matrix_idx[(i, j)] != -255:
                 homographys_abs[matrix_idx[i, j]] = homography_path_iter(center_image, (i, j), matrix_idx,
                                                                          homographys_rel)
-    #calculate an estimate for each point_world
+    # calculate an estimate for each point_world
     for i in range(len(point_world)):
-        point_idx=list(point_world[i][1])[0]
-        est_homography=homographys_abs[point_idx[0]]
-        start_coord=features[point_idx[2]][0][point_idx[1]].pt
-        est_world_pos=apply_homography_to_point(start_coord,est_homography)
-        point_world[i][0]=est_world_pos
+        point_idx = list(point_world[i][1])[0]
+        est_homography = homographys_abs[point_idx[0]]
+        start_coord = features[point_idx[2]][0][point_idx[1]].pt
+        est_world_pos = apply_homography_to_point(start_coord, est_homography)
+        point_world[i][0] = est_world_pos
 
-    return matrix_idx, features, matches, point_world, homographys_abs
+    return matrix_idx, features, matches, point_world, point_world_idx, homographys_abs
 
 
+def prepare_data(matrix_idx, features, matches, point_world, point_world_idx, homographys_abs, intrinsic, dist_coeffs):
+    n_observations = len(point_world_idx)
+    n_cameras = len(homographys_abs)
+    n_points = len(point_world)
 
+    points_world_frame = np.empty(n_points * 2)
+    camera_indices = []
+    point_indices = []
+    points_camera_frame = []
+    camera_params = np.append(intrinsic.ravel(), dist_coeffs.ravel())
+
+    for i in range(len(point_world)):
+        for j in range(len(point_world[i][1])):
+            point_idx = list(point_world[i][1])
+            camera_indices.append(point_idx[j][0])
+            point_indices.append([i])
+            points_camera_frame.append(features[point_idx[j][2]][0][point_idx[j][1]].pt)
+
+        points_world_frame[2 * i:2 * i + 2] = point_world[i][0].astype(float)
+
+    homographys = np.empty(n_cameras * 9)
+    for i in range(n_cameras):
+        homographys[9 * i:9 * i + 9] = homographys_abs[i].ravel()
+
+    points_camera_frame = np.array(points_camera_frame)
+    n = 9 * n_cameras + 2 * n_points + 13
+    m = 2 * points_camera_frame.shape[0]
+    print("n_cameras: {}".format(n_cameras))
+    print("n_points: {}".format(n_points))
+    print("Total number of parameters: {}".format(n))
+    print("Total number of residuals: {}".format(m))
+    return camera_params, points_world_frame, homographys, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations
+
+
+def residuals(params, n_cameras, n_points, n_observations, camera_indicies, point_indicies, points_camera_frame):
+    intrinsic = params[:9].reshape(3, 3)
+    undistort_coeffs = params[9:13]
+    homographys = params[13:13 + n_cameras * 9].reshape(n_cameras, 3, 3)
+    points_world_frame = params[13 + n_cameras * 9:].reshape(n_points, 2)
+
+    residuals = np.empty(n_observations * 2)
+    for i in range(n_observations):
+        point_distorted = points_camera_frame[i].astype('float32')
+        point_undistorted = cv2.undistortPoints(point_distorted.reshape(-1, 1, 2), intrinsic, undistort_coeffs,
+                                                R=np.eye(3), P=intrinsic)
+        point_warped = apply_homography_to_point(point_undistorted, homographys[camera_indicies[i]])
+        residuals[2 * i:2 * i + 2] = (point_warped - points_world_frame[point_indicies[i]]).reshape(2)
+    return residuals
+
+
+def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices):
+    camera_indices = np.array(camera_indices)
+    point_indices = np.array(point_indices)
+    m = camera_indices.size * 2
+    n = 13 + n_cameras * 9 + n_points * 2
+    A = lil_matrix((m, n), dtype=int)
+    A[:, :13] = 1
+
+
+    for i in range(len(camera_indices)):
+        A[2*i,13+camera_indices[i]*9:13+camera_indices[i]*9+9]=1
+        A[2 * i+1, 13 + camera_indices[i] * 9:13 + camera_indices[i] * 9 + 9] = 1
+
+        A[2 * i, 13 + n_cameras * 9 + point_indices[i] * 2]=1
+        A[2 * i+1, 13 + n_cameras * 9 + point_indices[i] * 2] = 1
+    """i = np.arange(camera_indices.size)
+    for s in range(9):
+        A[2 * i, 13 + camera_indices * 9 + s] = 1
+        A[2 * i + 1, 13 + camera_indices * 9 + s] = 1
+
+    for s in range(2):
+        A[2 * i, 13 + n_cameras * 9 + point_indices * 2 + s] = 1
+        A[2 * i + 1, 13 + n_cameras * 9 + point_indices * 2 + s] = 1"""
+    fig = plt.figure()
+    plt.spy(A)
+    plt.show()
+    fig.savefig('sparse.png', dpi=500)
+    return A
 
 
 def closest_image_map(height_ori, width_ori, coordinates, h_img, w_img, downscaling_factor=4, margin=1,
@@ -276,8 +355,8 @@ def apply_homography_to_point(point, M):
     :return: transformed point in coordinates
     '''
     a = np.array([np.asarray(point)], dtype='float32').reshape(-1, 1, 2)
-    result = np.round(cv2.perspectiveTransform(a, M))
-    return result.reshape(1, 2)[0].astype('int')
+    result = cv2.perspectiveTransform(a, M)
+    return result.reshape(1, 2)[0]
 
 
 def multiple_v3(list_of_images, homographys, margin=1):
@@ -356,12 +435,29 @@ if __name__ == '__main__':
     t = len(data)
     center_coordinates = (1, 1)
 
-    idx, features, matches, points_world, homographys = generate_matrixes(data, w, center_image=center_coordinates,
-                                                                          sift_threshold=0.5)
+    idx, features, matches, points_world, point_world_idx, homographys = generate_matrixes(data, w,
+                                                                                           center_image=center_coordinates,
+                                                                                           sift_threshold=0.5)
+
+    camera_params, points_world_frame, homographys_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
+        idx, features,
+        matches,
+        points_world,
+        point_world_idx,
+        homographys,
+        intrinsic,
+        distCoeffs)
+    x0 = np.hstack((camera_params.ravel(), homographys_ba.ravel(), points_world_frame.ravel()))
+    f0 = residuals(x0, n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
+    plt.plot(f0)
+    plt.show()
+    A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
+
+    res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
+                        args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
     print('generated matrixes')
+
     res = multiple_v3(data, homographys, 1)
     plt.imshow(res)
     cv2.imwrite('res.jpg', res)
     plt.show()
-
-
