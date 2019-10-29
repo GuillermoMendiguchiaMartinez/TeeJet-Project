@@ -21,25 +21,29 @@ def homography_from_rotation(angle, camera_matrix, axis=0):
     return M
 
 
-def homography_path_iter(position, target, homographys_rel, homography=np.eye(3)):
-    if position[0] < target[0]:
+def homography_path_iter(position, target, matrix_idx, homographys_rel, homography=np.eye(3)):
+    if position[0] < target[0] and matrix_idx[position[0] + 1, position[1]] != -255:
         M = homographys_rel[position, (position[0] + 1, position[1])]
         M = np.linalg.inv(M)
         homography = np.matmul(homography, M)
-        result = homography_path_iter((position[0] + 1, position[1]), target,homographys_rel, homography)
-    elif position[1] < target[1]:
+        result = homography_path_iter((position[0] + 1, position[1]), target, matrix_idx=matrix_idx,
+                                      homographys_rel=homographys_rel, homography=homography)
+    elif position[1] < target[1] and matrix_idx[position[0], position[1] + 1] != -255:
         M = homographys_rel[position, (position[0], position[1] + 1)]
         M = np.linalg.inv(M)
         homography = np.matmul(homography, M)
-        result = (homography_path_iter((position[0], position[1] + 1), target,homographys_rel, homography))
-    elif position[0] > target[0]:
+        result = homography_path_iter((position[0], position[1] + 1), target, matrix_idx=matrix_idx,
+                                      homographys_rel=homographys_rel, homography=homography)
+    elif position[0] > target[0] and matrix_idx[position[0] - 1, position[1]] != 255:
         M = homographys_rel[(position[0] - 1, position[1]), position]
         homography = np.matmul(homography, M)
-        result = homography_path_iter((position[0] - 1, position[1]), target,homographys_rel, homography)
+        result = homography_path_iter((position[0] - 1, position[1]), target, matrix_idx=matrix_idx,
+                                      homographys_rel=homographys_rel, homography=homography)
     elif position[1] > target[1]:
         M = homographys_rel[(position[0], position[1] - 1), position]
         homography = np.matmul(homography, M)
-        result = homography_path_iter((position[0], position[1] - 1), target,homographys_rel, homography)
+        result = homography_path_iter((position[0], position[1] - 1), target, matrix_idx=matrix_idx,
+                                      homographys_rel=homographys_rel, homography=homography)
     else:
         result = homography
     return result
@@ -75,7 +79,7 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0)):
     point_world = []
     for i in range(h):
         for j in range(w):
-            if i<h-1:
+            if i < h-1 :
                 if matrix_idx[i, j] >= 0 and matrix_idx[i + 1, j] >= 0:
                     all_matches = flann.knnMatch(features[(i, j)][1], features[(i + 1, j)][1], k=2)
                     goodmatches = []
@@ -111,18 +115,21 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0)):
                                     point_world_idx[point] = point_world_idx[query]
                                 point_world[point_world_idx[train]][2] = False
 
-            if j <w-1:
+            if j < w-1 :
                 if matrix_idx[i, j] >= 0 and matrix_idx[i, j + 1] >= 0:
                     all_matches = flann.knnMatch(features[i, j][1], features[i, j + 1][1], k=2)
                     goodmatches = []
                     for m, n in all_matches:
                         if m.distance < 0.7 * n.distance:
                             goodmatches.append(m)
+                    print(i)
+                    print(j)
+                    print(len(goodmatches))
                     matches[((i, j), (i, j + 1))] = goodmatches
                     # add the points to the world_points
                     for match in tqdm(goodmatches):
                         query = (matrix_idx[i, j], match.queryIdx)
-                        train = (matrix_idx[i, j+1], match.trainIdx)
+                        train = (matrix_idx[i, j + 1], match.trainIdx)
                         if query not in point_world_idx:
                             if train not in point_world_idx:
                                 point_world.append([(0, 0), [query, train], True])
@@ -145,8 +152,8 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0)):
     for i in range(h):
 
         for j in range(w):
-            if i < h-1:
-                if matrix_idx[(i + 1, j)]!=-255:
+            if i < h - 1:
+                if matrix_idx[(i + 1, j)] != -255:
                     match = matches[((i, j), (i + 1, j))]
                     keypoints1, _ = features[(i, j)]
                     keypoints2, _ = features[(i + 1, j)]
@@ -154,8 +161,8 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0)):
                     dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in match]).reshape(-1, 1, 2)
                     M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
                     homographys_rel[((i, j), (i + 1, j))] = M
-            if j<w-1:
-                if matrix_idx[(i, j+1)] != -255:
+            if j < w - 1:
+                if matrix_idx[(i, j + 1)] != -255:
                     match = matches[((i, j), (i, j + 1))]
                     keypoints1, _ = features[(i, j)]
                     keypoints2, _ = features[(i, j + 1)]
@@ -164,14 +171,15 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0)):
                     M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
                     homographys_rel[((i, j), (i, j + 1))] = M
 
-    homographys_abs = [None] * matrix_idx.size
+    homographys_abs = [None] * matrix_idx[matrix_idx != -255].size
     for i in range(h):
         for j in range(w):
             if matrix_idx[(i, j)] != -255:
-                homographys_abs[matrix_idx[i, j]] = homography_path_iter(center_image, (i, j), homographys_rel)
+                homographys_abs[matrix_idx[i, j]] = homography_path_iter(center_image, (i, j), matrix_idx,
+                                                                         homographys_rel)
 
-    #todo remove after debugging
-    #homographys_abs[1]=np.linalg.inv(homographys_abs[1])
+    # todo remove after debugging
+    # homographys_abs[1]=np.linalg.inv(homographys_abs[1])
     return matrix_idx, features, matches, point_world, homographys_abs
 
 
@@ -296,7 +304,8 @@ def apply_homography_to_point(point, M):
     result = np.round(cv2.perspectiveTransform(a, M))
     return result.reshape(1, 2)[0].astype('int')
 
-def multiple_v3(list_of_images,homographys,margin=1):
+
+def multiple_v3(list_of_images, homographys, margin=1):
     w = list_of_images[0].shape[1]
     h = list_of_images[0].shape[0]
 
@@ -331,7 +340,7 @@ def multiple_v3(list_of_images,homographys,margin=1):
 
     offset = np.array([[1, 0, offset_x], [0, 1, offset_y], [0, 0, 1]])
 
-    closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, h, w, downscaling_factor=4, verbose=True )
+    closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, h, w, downscaling_factor=4, verbose=True)
 
     result = np.zeros((h_res, w_res, 3), dtype='uint8')
     for i in range(0, len(homographys)):
@@ -344,6 +353,7 @@ def multiple_v3(list_of_images,homographys,margin=1):
         result[np.logical_and(closest_img_map == i + 1, warped_gray != 0)] = warped_image[
             np.logical_and(closest_img_map == i + 1, warped_gray != 0)]
     return result
+
 
 def multiple_v2(list_of_lists_of_images, connections, homographys, og_coordinate, margin=1):
     '''
@@ -424,7 +434,7 @@ if __name__ == '__main__':
 
     MAX_MATCHES = 30000
 
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\v"  # Enter Directory of all images
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\Photos"  # Enter Directory of all images
     data_path = os.path.join(img_dir, '*g')
     files = glob.glob(data_path)
     data = []
@@ -436,16 +446,16 @@ if __name__ == '__main__':
     for f1 in files:
         img1 = cv2.imread(f1)
         cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
-        img1 = cv2.undistort(img1, intrinsic, distCoeffs)[300:-300, 300:-300, :]
+        # img1 = cv2.undistort(img1, intrinsic, distCoeffs)[300:-300, 300:-300, :]
         data.append(img1)
 
-    w = 1
+    w = 2
     t = len(data)
-    center_coordinates = (0, 0)
+    center_coordinates = (1, 0)
 
-    idx, features, matches,points_world,homographys = generate_matrixes(data, w,center_image=center_coordinates)
+    idx, features, matches, points_world, homographys = generate_matrixes(data, w, center_image=center_coordinates)
     print('generated matrixes')
-    res=multiple_v3(data,homographys,1)
+    res = multiple_v3(data, homographys, 1)
     plt.imshow(res)
     cv2.imwrite('res.jpg', res)
     plt.show()
