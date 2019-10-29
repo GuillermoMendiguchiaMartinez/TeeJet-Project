@@ -9,16 +9,91 @@ import os
 from tqdm import tqdm
 
 
-def homography_from_rotation(angle, camera_matrix, axis=0):
-    if axis == 0:
-        R = np.array([[1, 0, 0], [0, math.cos(angle), -math.sin(angle)], [0, math.sin(angle), math.cos(angle)]])
-    elif axis == 1:
-        R = np.array([[math.cos(angle), 0, math.sin(angle)], [0, 1, 0], [-math.sin(angle), 0, math.cos(angle)]])
-    elif axis == 2:
-        R = np.array([[math.cos(angle), -math.sin(angle), 0], [math.sin(angle), math.cos(angle), 0], [0, 0, 1]])
-    RK = np.matmul(R, np.linalg.inv(camera_matrix))
-    M = np.matmul(camera_matrix, RK)
-    return M
+def match_and_extract_points(position, target, sift_threshold,
+                             matrix_idx,
+                             ransac_threshold,
+                             use_inliers_only,
+                             flann, features, matches,
+                             homographys_rel,
+                             point_world_idx,
+                             point_world):
+    if matrix_idx[position[0], position[1]] != -255 and matrix_idx[target[0], target[1]] != -255:
+        all_matches = flann.knnMatch(features[position][1], features[target][1], k=2)
+        goodmatches = []
+        for m, n in all_matches:
+            if m.distance < sift_threshold * n.distance:
+                goodmatches.append(m)
+        if len(goodmatches) < 4:
+            print('not enough matches found!!!')
+
+        print(position)
+        print(target)
+        print(len(goodmatches))
+
+        keypoints1, _ = features[position]
+        keypoints2, _ = features[target]
+        src_pts = np.float32([keypoints1[m.queryIdx].pt for m in goodmatches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in goodmatches]).reshape(-1, 1, 2)
+        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, ransac_threshold)
+        homographys_rel[(position, target)] = M
+
+        if use_inliers_only:
+            goodmatches = np.array(goodmatches)
+            goodmatches = goodmatches.reshape(mask.shape)
+            matches[(position, target)] = goodmatches[mask == 1]
+        else:
+            matches[(position, target)] = goodmatches
+
+        # add the points to the world_points
+        for match in matches[(position, target)]:
+            query = (matrix_idx[position[0], position[1]], match.queryIdx,position)
+            train = (matrix_idx[target[0], target[1]], match.trainIdx,target)
+            if query not in point_world_idx:
+                if train not in point_world_idx:
+                    # creates new point_world if neither keypoint is found in another point_world
+                    point_world.append(
+                        [(0, 0), set([query, train]),
+                         set([matrix_idx[position[0], position[1]], matrix_idx[target[0], target[1]]]), True])
+                    point_world_idx[query] = len(point_world) - 1
+                    point_world_idx[train] = len(point_world) - 1
+                else:
+                    # if train is found in a point_world, query is added to that point
+                    point_world[point_world_idx[train]][1].add(query)
+                    if matrix_idx[position[0], position[1]] in point_world[point_world_idx[train]][2]:
+                        print('Warning 2 points of same image added to same world point')
+                        print(point_world_idx[train])
+                    point_world[point_world_idx[train]][2].add(matrix_idx[position[0], position[1]])
+                    point_world_idx[query] = point_world_idx[train]
+            else:
+                if train not in point_world_idx:
+                    # if query is found in a point_world,train is added to that point
+                    point_world[point_world_idx[query]][1].add(train)
+                    if matrix_idx[target[0], target[1]] in point_world[point_world_idx[query]][2]:
+                        print('Warning 2 points of same image added to same world point')
+                        print(point_world_idx[query])
+                    point_world[point_world_idx[query]][2].add(matrix_idx[target[0], target[1]])
+                    point_world_idx[train] = point_world_idx[query]
+                else:
+                    # if both query and train are found in 2 different point_worlds those 2 are combined
+                    if point_world_idx[query] != point_world_idx[train]:
+                        point_world[point_world_idx[query]][1] = point_world[point_world_idx[query]][
+                            1].union(point_world[point_world_idx[train]][1])
+
+                        # check if there are multiple images from for example image 1 in the 2 merged groups
+                        sum_of_images = len(point_world[point_world_idx[query]][2]) + \
+                                        len(point_world[point_world_idx[train]][2])
+
+                        if sum_of_images > len(point_world[point_world_idx[query]][2]):
+                            print('Warning 2 points of same image added to same world point')
+                            print(point_world_idx[query])
+
+                        point_world[point_world_idx[query]][2] = point_world[point_world_idx[query]][
+                            2].union(point_world[point_world_idx[train]][2])
+                        for point in point_world[point_world_idx[train]][1]:
+                            point_world_idx[point] = point_world_idx[query]
+                        point_world[point_world_idx[train]][3] = False
+
+    return matches, homographys_rel, point_world_idx, point_world
 
 
 def homography_path_iter(position, target, matrix_idx, homographys_rel, homography=np.eye(3)):
@@ -49,7 +124,8 @@ def homography_path_iter(position, target, matrix_idx, homographys_rel, homograp
     return result
 
 
-def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0)):
+def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0), use_inliers_only=True,
+                      ransac_threshold=10, sift_threshold=0.7):
     sift = cv2.xfeatures2d.SIFT_create(MAX_MATCHES)
     FLANN_INDEX_KDTREE = 0
     index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
@@ -75,160 +151,59 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0)):
                 features[(i, j)] = sift.detectAndCompute(img, None)
 
     matches = {}
+    homographys_rel = {}
     point_world_idx = {}
     point_world = []
     for i in range(h):
         for j in range(w):
-            if i < h-1 :
-                if matrix_idx[i, j] >= 0 and matrix_idx[i + 1, j] >= 0:
-                    all_matches = flann.knnMatch(features[(i, j)][1], features[(i + 1, j)][1], k=2)
-                    goodmatches = []
-                    for m, n in all_matches:
-                        if m.distance < 0.7 * n.distance:
-                            goodmatches.append(m)
-                    if len(goodmatches) < 4:
-                        print('not enough matches found!!!')
-
-                    print(i)
-                    print(j)
-                    print(len(goodmatches))
-                    matches[((i, j), (i + 1, j))] = goodmatches
-                    # add the points to the world_points
-                    for match in tqdm(goodmatches):
-                        query = (matrix_idx[i, j], match.queryIdx)
-                        train = (matrix_idx[i + 1, j], match.trainIdx)
-                        if query not in point_world_idx:
-                            if train not in point_world_idx:
-                                point_world.append([(0, 0), [query, train], True])
-                                point_world_idx[query] = len(point_world) - 1
-                                point_world_idx[train] = len(point_world) - 1
-                            else:
-                                point_world[point_world_idx[train]][1] += [query]
-                                point_world_idx[query] = point_world_idx[train]
-                        else:
-                            if train not in point_world_idx:
-                                point_world[point_world_idx[query]][1] += [train]
-                                point_world_idx[train] = point_world_idx[query]
-                            else:
-                                point_world[point_world_idx[query]][1] += point_world[point_world_idx[train]][1]
-                                for point in point_world[point_world_idx[train]][1]:
-                                    point_world_idx[point] = point_world_idx[query]
-                                point_world[point_world_idx[train]][2] = False
-
-            if j < w-1 :
-                if matrix_idx[i, j] >= 0 and matrix_idx[i, j + 1] >= 0:
-                    all_matches = flann.knnMatch(features[i, j][1], features[i, j + 1][1], k=2)
-                    goodmatches = []
-                    for m, n in all_matches:
-                        if m.distance < 0.7 * n.distance:
-                            goodmatches.append(m)
-                    print(i)
-                    print(j)
-                    print(len(goodmatches))
-                    matches[((i, j), (i, j + 1))] = goodmatches
-                    # add the points to the world_points
-                    for match in tqdm(goodmatches):
-                        query = (matrix_idx[i, j], match.queryIdx)
-                        train = (matrix_idx[i, j + 1], match.trainIdx)
-                        if query not in point_world_idx:
-                            if train not in point_world_idx:
-                                point_world.append([(0, 0), [query, train], True])
-                                point_world_idx[query] = len(point_world) - 1
-                                point_world_idx[train] = len(point_world) - 1
-                            else:
-                                point_world[point_world_idx[train]][1] += [query]
-                                point_world_idx[query] = point_world_idx[train]
-                        else:
-                            if train not in point_world_idx:
-                                point_world[point_world_idx[query]][1] += [train]
-                                point_world_idx[train] = point_world_idx[query]
-                            else:
-                                point_world[point_world_idx[query]][1] += point_world[point_world_idx[train]][1]
-                                for point in point_world[point_world_idx[train]][1]:
-                                    point_world_idx[point] = point_world_idx[query]
-                                point_world[point_world_idx[train]][2] = False
-    homographys_rel = {}
-
-    for i in range(h):
-
-        for j in range(w):
             if i < h - 1:
-                if matrix_idx[(i + 1, j)] != -255:
-                    match = matches[((i, j), (i + 1, j))]
-                    keypoints1, _ = features[(i, j)]
-                    keypoints2, _ = features[(i + 1, j)]
-                    src_pts = np.float32([keypoints1[m.queryIdx].pt for m in match]).reshape(-1, 1, 2)
-                    dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in match]).reshape(-1, 1, 2)
-                    M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-                    homographys_rel[((i, j), (i + 1, j))] = M
-            if j < w - 1:
-                if matrix_idx[(i, j + 1)] != -255:
-                    match = matches[((i, j), (i, j + 1))]
-                    keypoints1, _ = features[(i, j)]
-                    keypoints2, _ = features[(i, j + 1)]
-                    src_pts = np.float32([keypoints1[m.queryIdx].pt for m in match]).reshape(-1, 1, 2)
-                    dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in match]).reshape(-1, 1, 2)
-                    M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-                    homographys_rel[((i, j), (i, j + 1))] = M
 
+                if matrix_idx[i, j] >= 0 and matrix_idx[i + 1, j] >= 0:
+                    matches, homographys_rel, point_world_idx, point_world = match_and_extract_points((i, j),
+                                                                                                      (i + 1, j),
+                                                                                                      sift_threshold,
+                                                                                                      matrix_idx,
+                                                                                                      ransac_threshold,
+                                                                                                      use_inliers_only,
+                                                                                                      flann, features,
+                                                                                                      matches,
+                                                                                                      homographys_rel,
+                                                                                                      point_world_idx,
+                                                                                                      point_world)
+
+            if j < w - 1:
+                if matrix_idx[i, j] >= 0 and matrix_idx[i, j + 1] >= 0:
+                    matches, homographys_rel, point_world_idx, point_world = match_and_extract_points((i, j),
+                                                                                                      (i, j+1),
+                                                                                                      sift_threshold,
+                                                                                                      matrix_idx,
+                                                                                                      ransac_threshold,
+                                                                                                      use_inliers_only,
+                                                                                                      flann, features,
+                                                                                                      matches,
+                                                                                                      homographys_rel,
+                                                                                                      point_world_idx,
+                                                                                                      point_world)
+
+    #calculate the homographys from the center image to each image
     homographys_abs = [None] * matrix_idx[matrix_idx != -255].size
     for i in range(h):
         for j in range(w):
             if matrix_idx[(i, j)] != -255:
                 homographys_abs[matrix_idx[i, j]] = homography_path_iter(center_image, (i, j), matrix_idx,
                                                                          homographys_rel)
+    #calculate an estimate for each point_world
+    for i in range(len(point_world)):
+        point_idx=list(point_world[i][1])[0]
+        est_homography=homographys_abs[point_idx[0]]
+        start_coord=features[point_idx[2]][0][point_idx[1]].pt
+        est_world_pos=apply_homography_to_point(start_coord,est_homography)
+        point_world[i][0]=est_world_pos
 
-    # todo remove after debugging
-    # homographys_abs[1]=np.linalg.inv(homographys_abs[1])
     return matrix_idx, features, matches, point_world, homographys_abs
 
 
-def find_homography(img1, img2, MIN_MATCH_COUNT=4, MAX_MATCHES=10000):
-    '''
-    finds Homography for 2 given Images
-    :param img1: image that will be transformed
-    :param img2: image that stays
-    :param MIN_MATCH_COUNT: min ammount of matches that are needed, otherwise an error is shown
-    :param MAX_MATCHES: max ammount of matches that will be extracted in each picture
-    :return: Homography Matrix M
-    '''
-    img1 = cv2.cvtColor(img1, cv2.COLOR_RGB2GRAY)
-    img2 = cv2.cvtColor(img2, cv2.COLOR_RGB2GRAY)
 
-    sift = cv2.xfeatures2d.SIFT_create(MAX_MATCHES)
-    # brisk = cv2.BRISK_create(60)
-    # orb = cv2.ORB_create(MAX_MATCHES)
-    keypoints1, descriptors1 = sift.detectAndCompute(img1, None)
-    keypoints2, descriptors2 = sift.detectAndCompute(img2, None)
-    print(len(keypoints1))
-    print(len(keypoints2))
-
-    FLANN_INDEX_KDTREE = 0
-    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    search_params = dict(checks=50)  # or pass empty dictionary
-
-    flann = cv2.FlannBasedMatcher(index_params, search_params)
-
-    matches = flann.knnMatch(descriptors1, descriptors2, k=2)
-
-    good = []
-    for m, n in matches:
-        if m.distance < 0.7 * n.distance:
-            good.append(m)
-    print(len(good))
-
-    # matches = sorted(matches, key = lambda x:x.distance)
-    # good=matches[0:1000]
-
-    if len(good) > MIN_MATCH_COUNT:
-        src_pts = np.float32([keypoints1[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
-        dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
-
-        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-    else:
-        print("Not enough matches are found - %d/%d" % (len(good), MIN_MATCH_COUNT))
-
-    return M
 
 
 def closest_image_map(height_ori, width_ori, coordinates, h_img, w_img, downscaling_factor=4, margin=1,
@@ -355,78 +330,6 @@ def multiple_v3(list_of_images, homographys, margin=1):
     return result
 
 
-def multiple_v2(list_of_lists_of_images, connections, homographys, og_coordinate, margin=1):
-    '''
-    takes images and stitches them together
-    :param list_of_lists_of_images: images in the format [[0,1,...,w],[0,1,...w],...,[0,1,...v]] v<w
-    :param connections: how the pictures are connected
-    :param homographys: homographys according to the connections
-    :param og_coordinate: coordinates of the center image (will not be transformed)
-    :return: stitched image
-    '''
-    # move the center image into the middle
-    # offset_y = og_coordinate[0] * list_of_lists_of_images[0][0].shape[0]
-    # offset_x = og_coordinate[0] * list_of_lists_of_images[0][0].shape[1]
-    w = list_of_lists_of_images[0][0].shape[1]
-    h = list_of_lists_of_images[0][0].shape[0]
-
-    # calculate the transformed middle coordinates
-    trans_img_centers = []
-    for homography in homographys:
-        # center = apply_homography_to_point((offset_x * 0.5, offset_y * 0.5), np.matmul(offset, homography))
-        center = apply_homography_to_point((w * 0.5, h * 0.5), homography)
-        trans_img_centers.append(list(center))
-    # calculate the estimated max and min of the endresult:
-    y_max = 0.5 * h + margin * h
-    y_min = 0.5 * h - margin * h
-    x_max = 0.5 * w + margin * w
-    x_min = 0.5 * w - margin * w
-    for img in trans_img_centers:
-        y_max = int(round(max(y_max, img[1] + margin * h)))
-        y_min = int(round(min(y_min, img[1] - margin * h)))
-        x_max = int(round(max(x_max, img[0] + margin * w)))
-        x_min = int(round(min(x_min, img[0] - margin * w)))
-
-    w_res = x_max - x_min
-    h_res = y_max - y_min
-
-    offset_y = int(round(abs(y_min)))
-    offset_x = int(round(abs(x_min)))
-    trans_img_centers.append([0.5 * w, 0.5 * h])
-
-    for i in range(len(trans_img_centers)):
-        trans_img_centers[i][1] += offset_y
-        trans_img_centers[i][0] += offset_x
-
-    offset = np.array([[1, 0, offset_x], [0, 1, offset_y], [0, 0, 1]])
-
-    closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, h, w, downscaling_factor=4, verbose=True, )
-    # generate empty
-    result = np.zeros((h_res, w_res, 3), dtype='uint8')
-
-    for i in range(0, len(homographys)):
-        # add the connected images
-        M = np.matmul(offset, homographys[i])
-        warped_image = cv2.warpPerspective(list_of_lists_of_images[connections[i][0][0]][connections[i][0][1]], M,
-                                           (result.shape[1], result.shape[0]))
-        warped_gray = cv2.cvtColor(warped_image, cv2.COLOR_RGB2GRAY)
-        result[result == 0] = warped_image[result == 0]
-        result[np.logical_and(closest_img_map == i + 1, warped_gray != 0)] = warped_image[
-            np.logical_and(closest_img_map == i + 1, warped_gray != 0)]
-
-    # add the center img
-    center_img = np.zeros((h_res, w_res, 3), dtype='uint8')
-
-    center_img[offset_y:offset_y + h, offset_x:offset_x + w, :] = list_of_lists_of_images[og_coordinate[0]][
-        og_coordinate[1]]
-    center_gray = cv2.cvtColor(center_img, cv2.COLOR_RGB2GRAY)
-    result[result == 0] = center_img[result == 0]
-    result[np.logical_and(closest_img_map == i + 2, center_gray != 0)] = center_img[
-        np.logical_and(closest_img_map == i + 2, center_gray != 0)]
-
-    return result
-
-
 if __name__ == '__main__':
     # %%
 
@@ -451,111 +354,14 @@ if __name__ == '__main__':
 
     w = 2
     t = len(data)
-    center_coordinates = (1, 0)
+    center_coordinates = (1, 1)
 
-    idx, features, matches, points_world, homographys = generate_matrixes(data, w, center_image=center_coordinates)
+    idx, features, matches, points_world, homographys = generate_matrixes(data, w, center_image=center_coordinates,
+                                                                          sift_threshold=0.5)
     print('generated matrixes')
     res = multiple_v3(data, homographys, 1)
     plt.imshow(res)
     cv2.imwrite('res.jpg', res)
     plt.show()
 
-    """
-    min_x_rot_angle = 0
-    min_cost = 100
-    for angle in np.arange(-0.15, 0.15, 0.001):
-        center_angle_matrix = homography_from_rotation(angle, intrinsic, 0)
 
-        warped_features = features.copy()
-        keypoints = features[center_coordinates][0]
-        warped_keypoints = cv2.perspectiveTransform(cv2.KeyPoint_convert(keypoints).reshape(-1, 1, 2),
-                                                    center_angle_matrix).astype('float')
-        warped_keypoints = list(
-            map(tuple, warped_keypoints.reshape((warped_keypoints.shape[0], warped_keypoints.shape[2]))))
-
-        warped_matches = matches.copy()
-
-        for i in range(len(warped_keypoints)):
-            warped_keypoints[i] = cv2.KeyPoint_convert([warped_keypoints[i]])[0]
-        warped_features[center_coordinates] = (warped_keypoints, features[center_coordinates][1])
-
-        M = np.eye(3)
-
-        for y in range(center_coordinates[0], 0, -1):
-            keypoints1 = warped_features[(y, center_coordinates[1])][0]
-            keypoints2 = warped_features[(y - 1, center_coordinates[1])][0]
-            match = (matches[((y - 1, center_coordinates[1]), (y, center_coordinates[1]))])
-
-            src_pts = np.float32([keypoints2[m.queryIdx].pt for m in match]).reshape(-1, 1, 2)
-            dst_pts = np.float32([keypoints1[m.trainIdx].pt for m in match]).reshape(-1, 1, 2)
-
-            M_iter, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-            M_iter = np.linalg.inv(M_iter)
-            M = np.matmul(M_iter, M)
-
-        num, Rs, Ts, Ns = cv2.decomposeHomographyMat(M, intrinsic)
-        for i in range(num):
-            vector1 = np.array([[0], [0], [1]])
-            vector2 = Ns[i]
-            vector2 = vector2 / np.linalg.norm(vector2)
-            cost = math.acos(np.dot(vector1.reshape(3), vector2.reshape(3)))
-            if abs(cost) < min_cost:
-                min_cost = cost
-                min_x_rot_angle = angle
-    print('best angle is:')
-    print(min_x_rot_angle)
-    print(min_cost)
-
-    # print(features)
-
-    """
-    """
-    for i in range(0, t // w):
-        row = data[i * w:(i + 1) * w]
-        list_of_lists_of_images.append(row)
-
-    if t % w != 0:
-        i = i + 1
-        row = data[i * w:-1]
-        list_of_lists_of_images.append(row)
-
-    og_coordinate = (4, 0)
-    homographys = []
-    connections = []
-    # strategy go vertical first
-    m_og = og_coordinate[0]
-    n_og = og_coordinate[1]
-    m = m_og
-
-    vertical_index = 0
-    while (m > 0):
-        m -= 1
-
-        homography = find_homography(list_of_lists_of_images[m][n_og], list_of_lists_of_images[m + 1][n_og])
-        if m + 1 < m_og:
-            homography = np.matmul(homographys[-1], homography)
-        homographys.append(homography)
-        connections.append(((m, n_og), (m_og, n_og)))
-    m = m_og
-    while m < len(list_of_lists_of_images) - 1:
-        m += 1
-        homography = find_homography(list_of_lists_of_images[m][n_og], list_of_lists_of_images[m - 1][n_og])
-        if m - 1 > m_og:
-            homography = np.matmul(homographys[-1], homography)
-        homographys.append(homography)
-        connections.append(((m, n_og), (m_og, n_og)))
-    print(homographys)
-    print(connections)
-
-    # homographys = [find_homography(list_of_lists_of_images[0][1], list_of_lists_of_images[1][1]),
-    #              find_homography(list_of_lists_of_images[2][1], list_of_lists_of_images[1][1])]
-    # print(homographys)
-    # connections = [((0, 1), (1, 1)), ((2, 1), (1, 1))]
-
-    res = multiple_v2(list_of_lists_of_images, connections, homographys, og_coordinate)
-
-    fig = plt.figure(figsize=(18, 16), dpi=200, facecolor='w', edgecolor='k')
-    cv2.imwrite('res.jpg', res)
-    plt.imshow(cv2.cvtColor(res, cv2.COLOR_BGR2RGB))
-    plt.show()
-    """
