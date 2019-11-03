@@ -63,7 +63,9 @@ def match_and_extract_points(position, target, sift_threshold,
                     point_world[point_world_idx[train]][1].add(query)
                     if matrix_idx[position[0], position[1]] in point_world[point_world_idx[train]][2]:
                         print('Warning 2 points of same image added to same world point')
+                        print('query')
                         print(point_world_idx[train])
+                        point_world[point_world_idx[train]][3]=False
                     point_world[point_world_idx[train]][2].add(matrix_idx[position[0], position[1]])
                     point_world_idx[query] = point_world_idx[train]
             else:
@@ -72,7 +74,9 @@ def match_and_extract_points(position, target, sift_threshold,
                     point_world[point_world_idx[query]][1].add(train)
                     if matrix_idx[target[0], target[1]] in point_world[point_world_idx[query]][2]:
                         print('Warning 2 points of same image added to same world point')
+                        print('train')
                         print(point_world_idx[query])
+                        point_world[point_world_idx[query]][3]=False
                     point_world[point_world_idx[query]][2].add(matrix_idx[target[0], target[1]])
                     point_world_idx[train] = point_world_idx[query]
                 else:
@@ -87,7 +91,9 @@ def match_and_extract_points(position, target, sift_threshold,
 
                         if sum_of_images > len(point_world[point_world_idx[query]][2]):
                             print('Warning 2 points of same image added to same world point')
+                            print('merge')
                             print(point_world_idx[query])
+                            point_world[point_world_idx[query]][3]=False
 
                         point_world[point_world_idx[query]][2] = point_world[point_world_idx[query]][
                             2].union(point_world[point_world_idx[train]][2])
@@ -194,6 +200,12 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0), 
             if matrix_idx[(i, j)] != -255:
                 homographys_abs[matrix_idx[i, j]] = homography_path_iter(center_image, (i, j), matrix_idx,
                                                                          homographys_rel)
+    point_world_usable=[]
+    for point in point_world:
+        if point[3]:
+            point_world_usable.append(point)
+
+    point_world=point_world_usable
     # calculate an estimate for each point_world
     for i in range(len(point_world)):
         point_idx = list(point_world[i][1])[0]
@@ -202,11 +214,12 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0), 
         est_world_pos = apply_homography_to_point(start_coord, est_homography)
         point_world[i][0] = est_world_pos
 
+
     return matrix_idx, features, matches, point_world, point_world_idx, homographys_abs
 
 
 def prepare_data(matrix_idx, features, matches, point_world, point_world_idx, homographys_abs, intrinsic, dist_coeffs):
-    n_observations = len(point_world_idx)
+
     n_cameras = len(homographys_abs)
     n_points = len(point_world)
 
@@ -224,7 +237,7 @@ def prepare_data(matrix_idx, features, matches, point_world, point_world_idx, ho
             points_camera_frame.append(features[point_idx[j][2]][0][point_idx[j][1]].pt)
 
         points_world_frame[2 * i:2 * i + 2] = point_world[i][0].astype(float)
-
+    n_observations = len(points_camera_frame)
     homographys = np.empty(n_cameras * 9)
     for i in range(n_cameras):
         homographys[9 * i:9 * i + 9] = homographys_abs[i].ravel()
@@ -241,9 +254,9 @@ def prepare_data(matrix_idx, features, matches, point_world, point_world_idx, ho
 
 def residuals(params, n_cameras, n_points, n_observations, camera_indicies, point_indicies, points_camera_frame):
     intrinsic = params[:9].reshape(3, 3)
-    undistort_coeffs = params[9:13]
-    homographys = params[13:13 + n_cameras * 9].reshape(n_cameras, 3, 3)
-    points_world_frame = params[13 + n_cameras * 9:].reshape(n_points, 2)
+    undistort_coeffs = params[9:14]
+    homographys = params[14:14 + n_cameras * 9].reshape(n_cameras, 3, 3)
+    points_world_frame = params[14 + n_cameras * 9:].reshape(n_points, 2)
 
     residuals = np.empty(n_observations * 2)
     for i in range(n_observations):
@@ -259,17 +272,17 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
     camera_indices = np.array(camera_indices)
     point_indices = np.array(point_indices)
     m = camera_indices.size * 2
-    n = 13 + n_cameras * 9 + n_points * 2
+    n = 14 + n_cameras * 9 + n_points * 2
     A = lil_matrix((m, n), dtype=int)
-    A[:, :13] = 1
+    A[:, :14] = 1
 
 
     for i in range(len(camera_indices)):
-        A[2*i,13+camera_indices[i]*9:13+camera_indices[i]*9+9]=1
-        A[2 * i+1, 13 + camera_indices[i] * 9:13 + camera_indices[i] * 9 + 9] = 1
+        A[2*i,14+camera_indices[i]*9:14+camera_indices[i]*9+9]=1
+        A[2 * i+1, 14 + camera_indices[i] * 9:14 + camera_indices[i] * 9 + 9] = 1
 
-        A[2 * i, 13 + n_cameras * 9 + point_indices[i] * 2]=1
-        A[2 * i+1, 13 + n_cameras * 9 + point_indices[i] * 2] = 1
+        A[2 * i, 14 + n_cameras * 9 + point_indices[i] * 2]=1
+        A[2 * i+1, 14 + n_cameras * 9 + point_indices[i] * 2] = 1
     """i = np.arange(camera_indices.size)
     for s in range(9):
         A[2 * i, 13 + camera_indices * 9 + s] = 1
@@ -414,30 +427,40 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    MAX_MATCHES = 30000
+    MAX_MATCHES = 50000
 
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\Photos"  # Enter Directory of all images
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos4"  # Enter Directory of all images
     data_path = os.path.join(img_dir, '*g')
     files = glob.glob(data_path)
     data = []
     list_of_lists_of_images = []
-    # parameters read out from opendronemap
-    intrinsic = np.array([[3968 * 0.638904348949862, 0, 2048], [0, 2976 * 0.638904348949862, 1536], [0, 0, 1]])
-    distCoeffs = np.array([0.06756436352714615, -0.09146430991012529, 0, 0])
+    # oneplus 7 pro estimated parameters
+    #intrinsic = np.array([[4347.358087366480, 0, 1780.759210199340], [0, 4349.787712956160, 1518.540335312340], [0, 0, 1]])
+    #distCoeffs = np.array([0.0928, -0.7394, 0, 0])
 
+
+    #spark parameters from pix4d
+    intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
+    distCoeffs = np.array([0.117, -0.298, 0.001, 0,0.142])
+    #spark estimated parameters
+    #intrinsic = np.array([[3968 * 0.638904348949862, 0, 2048], [0, 2976 * 0.638904348949862, 1536], [0, 0, 1]])
+    #distCoeffs = np.array([0.06756436352714615, -0.09146430991012529, 0, 0])
+    data = []
+    data_undistorted=[]
     for f1 in files:
         img1 = cv2.imread(f1)
         cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
-        # img1 = cv2.undistort(img1, intrinsic, distCoeffs)[300:-300, 300:-300, :]
+        data_undistorted.append(cv2.undistort(img1, intrinsic, distCoeffs))
         data.append(img1)
 
-    w = 2
+    w = 5
     t = len(data)
-    center_coordinates = (1, 1)
+    center_coordinates = (0, 0)
 
-    idx, features, matches, points_world, point_world_idx, homographys = generate_matrixes(data, w,
+    idx, features, matches, points_world, point_world_idx, homographys = generate_matrixes(data, w,MAX_MATCHES=MAX_MATCHES,
                                                                                            center_image=center_coordinates,
-                                                                                           sift_threshold=0.5)
+                                                                                           sift_threshold=0.5,ransac_threshold=5)
+    print('generated matrixes')
 
     camera_params, points_world_frame, homographys_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
         idx, features,
@@ -448,16 +471,38 @@ if __name__ == '__main__':
         intrinsic,
         distCoeffs)
     x0 = np.hstack((camera_params.ravel(), homographys_ba.ravel(), points_world_frame.ravel()))
+    print('made initial guess')
     f0 = residuals(x0, n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
     plt.plot(f0)
     plt.show()
+
+    res_image = multiple_v3(data_undistorted, homographys, 1)
+    plt.imshow(res_image)
+    cv2.imwrite('res_image_guess.jpg', res_image)
+
+
+    print('mean residuals= %f' % (np.mean(np.abs(f0))))
     A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
 
     res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
                         args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
-    print('generated matrixes')
-
-    res = multiple_v3(data, homographys, 1)
-    plt.imshow(res)
-    cv2.imwrite('res.jpg', res)
+    print('performed bundle adjustement')
+    plt.plot(res.fun)
     plt.show()
+    print('mean residuals= %f'%(np.mean(np.abs(res.fun))))
+
+    intrinsic = res.x[:9].reshape(3, 3)
+    distCoeffs = res.x[9:14]
+    homographys = res.x[14:14 + n_cameras * 9].reshape(n_cameras, 3, 3)
+
+    for i in range(len(data)):
+        data[i]=cv2.undistort(data[i], intrinsic, distCoeffs)
+
+    res_image = multiple_v3(data, homographys, 1)
+    plt.imshow(res_image)
+    cv2.imwrite('res_image.jpg', res_image)
+    plt.show()
+    print('intrinsic matrix is:')
+    print(intrinsic)
+    print('distortion coeffs are:')
+    print (distCoeffs)
