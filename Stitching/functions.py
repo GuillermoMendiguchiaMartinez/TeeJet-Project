@@ -133,7 +133,7 @@ def homography_path_iter(position, target, matrix_idx, homographys_rel, homograp
 
 
 def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0), use_inliers_only=True,
-                      ransac_threshold=10, sift_threshold=0.7):
+                      ransac_threshold=10, sift_threshold=0.7,verbose=True):
     sift = cv2.xfeatures2d.SIFT_create(MAX_MATCHES)
     FLANN_INDEX_KDTREE = 0
     index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
@@ -148,40 +148,47 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0), 
         matrix_idx = np.transpose(matrix_idx)
     print(matrix_idx.shape)
     matrix_idx[matrix_idx >= len(list_of_images)] = -255
-
+    if verbose:
+        print('start feature extraction')
     features = {}
-    for i in range(h):
-        for j in range(w):
-            idx = matrix_idx[i, j]
-            if idx != -255:
-                img = cv2.cvtColor(list_of_images[idx], cv2.COLOR_RGB2GRAY)
+    with tqdm(total=h*w, desc="feature extraction",disable=not verbose) as tExtraction:
+        for i in range(h):
+            for j in range(w):
+                idx = matrix_idx[i, j]
+                if idx != -255:
+                    img = cv2.cvtColor(list_of_images[idx], cv2.COLOR_RGB2GRAY)
 
-                features[(i, j)] = sift.detectAndCompute(img, None)
+                    features[(i, j)] = sift.detectAndCompute(img, None)
+                tExtraction.update()
 
     matches = {}
     homographys_rel = {}
     point_world_idx = {}
     point_world = []
-    for i in range(h):
-        for j in range(w):
-            if i < h - 1:
+    if verbose:
+        print('start matching')
+    with tqdm(total=h * w, desc="matching", disable=not verbose) as tMatching:
+        for i in range(h):
+            for j in range(w):
+                if i < h - 1:
 
-                if matrix_idx[i, j] >= 0 and matrix_idx[i + 1, j] >= 0:
-                    matches, homographys_rel, point_world_idx, point_world = match_and_extract_points((i, j),
-                                                                                                      (i + 1, j),
-                                                                                                      sift_threshold,
-                                                                                                      matrix_idx,
-                                                                                                      ransac_threshold,
-                                                                                                      use_inliers_only,
-                                                                                                      flann, features,
-                                                                                                      matches,
-                                                                                                      homographys_rel,
-                                                                                                      point_world_idx,
-                                                                                                      point_world)
+                    if matrix_idx[i, j] >= 0 and matrix_idx[i + 1, j] >= 0:
+                        matches, homographys_rel, point_world_idx, point_world = match_and_extract_points((i, j),
+                                                                                                          (i + 1, j),
+                                                                                                          sift_threshold,
+                                                                                                          matrix_idx,
+                                                                                                          ransac_threshold,
+                                                                                                          use_inliers_only,
+                                                                                                          flann, features,
+                                                                                                          matches,
+                                                                                                          homographys_rel,
+                                                                                                          point_world_idx,
+                                                                                                          point_world)
 
-            if j < w - 1:
-                if matrix_idx[i, j] >= 0 and matrix_idx[i, j + 1] >= 0:
-                    matches, homographys_rel, point_world_idx, point_world = match_and_extract_points((i, j),
+
+                if j < w - 1:
+                    if matrix_idx[i, j] >= 0 and matrix_idx[i, j + 1] >= 0:
+                        matches, homographys_rel, point_world_idx, point_world = match_and_extract_points((i, j),
                                                                                                       (i, j + 1),
                                                                                                       sift_threshold,
                                                                                                       matrix_idx,
@@ -192,6 +199,7 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0), 
                                                                                                       homographys_rel,
                                                                                                       point_world_idx,
                                                                                                       point_world)
+                tMatching.update()
 
     # calculate the homographys from the center image to each image
     homographys_abs = [None] * matrix_idx[matrix_idx != -255].size
@@ -292,7 +300,7 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
         A[2 * i, 13 + n_cameras * 9 + point_indices * 2 + s] = 1
         A[2 * i + 1, 13 + n_cameras * 9 + point_indices * 2 + s] = 1"""
     fig = plt.figure()
-    plt.spy(A)
+    plt.spy(A[:30,:30])
     plt.show()
     fig.savefig('sparse.png', dpi=500)
     return A
@@ -427,7 +435,7 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    MAX_MATCHES = 50000
+    MAX_MATCHES = 20000
 
     img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos4"  # Enter Directory of all images
     data_path = os.path.join(img_dir, '*g')
@@ -440,8 +448,11 @@ if __name__ == '__main__':
 
 
     #spark parameters from pix4d
-    intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
-    distCoeffs = np.array([0.117, -0.298, 0.001, 0,0.142])
+    #intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
+    #distCoeffs = np.array([0.117, -0.298, 0.001, 0,0.142])
+    #spark parameters from pix4d 2
+    intrinsic = np.array([[2902, 0, 1980], [0, 2902, 1440], [0, 0, 1]])
+    distCoeffs = np.array([0.118, -0.277, 0.001, 0,0.120])
     #spark estimated parameters
     #intrinsic = np.array([[3968 * 0.638904348949862, 0, 2048], [0, 2976 * 0.638904348949862, 1536], [0, 0, 1]])
     #distCoeffs = np.array([0.06756436352714615, -0.09146430991012529, 0, 0])
@@ -455,11 +466,11 @@ if __name__ == '__main__':
 
     w = 5
     t = len(data)
-    center_coordinates = (0, 0)
+    center_coordinates = (0, 2)
 
     idx, features, matches, points_world, point_world_idx, homographys = generate_matrixes(data, w,MAX_MATCHES=MAX_MATCHES,
                                                                                            center_image=center_coordinates,
-                                                                                           sift_threshold=0.5,ransac_threshold=5)
+                                                                                           sift_threshold=0.7,ransac_threshold=5,use_inliers_only=True)
     print('generated matrixes')
 
     camera_params, points_world_frame, homographys_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
