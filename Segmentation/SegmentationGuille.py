@@ -1,90 +1,86 @@
 import cv2
-import sys
 import numpy as np
 
 def nothing(x):
     pass
 
-useCamera=False
+def mouseRGB(event, x, y, flags, param):
+    if event == cv2.EVENT_LBUTTONDOWN:  # checks mouse left button down condition
+        colorsB = image[y, x, 0]
+        colorsG = image[y, x, 1]
+        colorsR = image[y, x, 2]
+        colors = image[y, x]
+        print("Red: ", colorsR)
+        print("Green: ", colorsG)
+        print("Blue: ", colorsB)
+        print("BGR Format: ", colors)
+        print("Coordinates of pixel: X: ", x, "Y: ", y)
 
-# Check if filename is passed
-if (len(sys.argv) <= 1) :
-    print("'Usage: python hsvThresholder.py <ImageFilePath>' to ignore camera and use a local image.")
-    useCamera = False
 
-# Create a window
-cv2.namedWindow('image')
+'''
+main function starts here
+we will call the mouse event and the segmentation event in this part
+'''
 
-# create trackbars for color change
-cv2.createTrackbar('HMin','image',0,179,nothing) # Hue is from 0-179 for Opencv
-cv2.createTrackbar('SMin','image',0,255,nothing)
-cv2.createTrackbar('VMin','image',0,255,nothing)
-cv2.createTrackbar('HMax','image',0,179,nothing)
-cv2.createTrackbar('SMax','image',0,255,nothing)
-cv2.createTrackbar('VMax','image',0,255,nothing)
+if __name__ == "__main__":
+    print("Please, select the undesired part")
+    image = cv2.imread("100m.jpg")
+    small2 = cv2.resize(image, (0, 0), fx=0.25, fy=0.25)
+    cv2.namedWindow('mouseRGB')
+    cv2.setMouseCallback('mouseRGB', mouseRGB)
 
-# Set default value for MAX HSV trackbars.
-cv2.setTrackbarPos('HMax', 'image', 179)
-cv2.setTrackbarPos('SMax', 'image', 255)
-cv2.setTrackbarPos('VMax', 'image', 255)
+##############################################################
+    # Selection of lower and upper threshold for colour detection
+    lowerBound = np.array([36, 25, 25])
+    upperBound = np.array([110, 255, 255])
 
-# Initialize to check if HSV min/max value changes
-hMin = sMin = vMin = hMax = sMax = vMax = 0
-phMin = psMin = pvMin = phMax = psMax = pvMax = 0
+    kernelOpen = np.ones((5, 5))
+    kernelClose = np.ones((20, 20))
 
-# Output Image to display
-if useCamera:
-    cap = cv2.VideoCapture(0)
-    # Wait longer to prevent freeze for videos.
-    waitTime = 330
-else:
-    img = cv2.imread('Colors.png',1)
-    output = img
-    waitTime = 33
+    # Read image
+    img = cv2.imread('100m.jpg', 1)
+    img_orig = cv2.imread('100m.jpg', 1)
 
-while(1):
+    # convert BGR to HSV
+    imgHSV = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-    if useCamera:
-        # Capture frame-by-frame
-        ret, img = cap.read()
-        output = img
+    # create the Mask
+    mask = cv2.inRange(imgHSV, lowerBound, upperBound)
 
-    # get current positions of all trackbars
-    hMin = cv2.getTrackbarPos('HMin','image')
-    sMin = cv2.getTrackbarPos('SMin','image')
-    vMin = cv2.getTrackbarPos('VMin','image')
+    # morphology
+    maskOpen = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernelOpen)
+    maskClose = cv2.morphologyEx(maskOpen, cv2.MORPH_CLOSE, kernelClose)
 
-    hMax = cv2.getTrackbarPos('HMax','image')
-    sMax = cv2.getTrackbarPos('SMax','image')
-    vMax = cv2.getTrackbarPos('VMax','image')
+    # Assign the desired mask
+    maskFinal = mask
 
-    # Set minimum and max HSV values to display
-    lower = np.array([hMin, sMin, vMin])
-    upper = np.array([hMax, sMax, vMax])
+    # Draw the contours
+    conts, h = cv2.findContours(maskFinal.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-    # Create HSV Image and threshold into a range.
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, lower, upper)
-    output = cv2.bitwise_and(img,img, mask= mask)
+    # get second masked value (background) mask must be inverted
+    mask_inv = cv2.bitwise_not(maskFinal)
+    background = np.full(img.shape, 255, dtype=np.uint8)
+    bk = cv2.bitwise_or(background, background, mask=mask)
 
-    # Print if there is a change in HSV value
-    if( (phMin != hMin) | (psMin != sMin) | (pvMin != vMin) | (phMax != hMax) | (psMax != sMax) | (pvMax != vMax) ):
-        print("(hMin = %d , sMin = %d, vMin = %d), (hMax = %d , sMax = %d, vMax = %d)" % (hMin , sMin , vMin, hMax, sMax , vMax))
-        phMin = hMin
-        psMin = sMin
-        pvMin = vMin
-        phMax = hMax
-        psMax = sMax
-        pvMax = vMax
+    #recolour the mask to a more visible tone
+    bk[mask > 0] = (255, 0, 0)
 
-    # Display output image
-    cv2.imshow('image',output)
+    # combine foreground+background
+    final = cv2.bitwise_or(img, bk)
 
-    # Wait longer to prevent freeze for videos.
-    if cv2.waitKey(waitTime) & 0xFF == ord('q'):
-        break
+    small = cv2.resize(final, (0,0), fx=0.25, fy=0.25)
 
-# Release resources
-if useCamera:
-    cap.release()
-cv2.destroyAllWindows()
+    #cv2.drawContours(small, conts, -1, (255, 0, 0), 1)
+    # cv2.imshow("maskClose", maskClose)
+    # cv2.imshow("maskOpen", maskOpen)
+    # cv2.imshow("mask", mask)
+    # cv2.imshow("Original", img_orig)
+    cv2.imshow("Segmented", small)
+
+    # Do until esc pressed
+    while (1):
+        cv2.imshow('mouseRGB', small2)
+        if cv2.waitKey(20) & 0xFF == 27:
+            break
+    # if esc pressed, finish.
+    cv2.destroyAllWindows()
