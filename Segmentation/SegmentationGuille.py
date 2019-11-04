@@ -17,6 +17,24 @@ def mouseRGB(event, x, y, flags, param):
         print("Coordinates of pixel: X: ", x, "Y: ", y)
 
 
+def segment(img,color,thresholdwidth,perform_opening=False,perform_closing=False):
+    colorHSV=cv2.cvtColor(np.array(color).astype('uint8').reshape(-1,1,3), cv2.COLOR_BGR2HSV)
+    lowerBound = np.array([max(colorHSV[0][0][0]-thresholdwidth,0), 25, 25])
+    upperBound = np.array([min(colorHSV[0][0][0]+thresholdwidth,255), 255, 255])
+    imgHSV = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(imgHSV, lowerBound, upperBound)
+    if perform_opening:
+        kernelOpen = np.ones((5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernelOpen)
+    if perform_closing:
+        kernelClose = np.ones((20, 20))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernelClose)
+    print('segmentation completed')
+    print(mask.shape)
+    return mask
+
+
+
 '''
 main function starts here
 we will call the mouse event and the segmentation event in this part
