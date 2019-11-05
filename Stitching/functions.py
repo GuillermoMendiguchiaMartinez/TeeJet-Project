@@ -241,7 +241,7 @@ def prepare_data(matrix_idx, features, matches, point_world, point_world_idx, ho
         for j in range(len(point_world[i][1])):
             point_idx = list(point_world[i][1])
             camera_indices.append(point_idx[j][0])
-            point_indices.append([i])
+            point_indices.append(i)
             points_camera_frame.append(features[point_idx[j][2]][0][point_idx[j][1]].pt)
 
         points_world_frame[2 * i:2 * i + 2] = point_world[i][0].astype(float)
@@ -282,25 +282,27 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
     m = camera_indices.size * 2
     n = 14 + n_cameras * 9 + n_points * 2
     A = lil_matrix((m, n), dtype=int)
+    # camera intrinsics are same for all observations
     A[:, :14] = 1
 
-
+    """
     for i in range(len(camera_indices)):
+        # camera homographys
         A[2*i,14+camera_indices[i]*9:14+camera_indices[i]*9+9]=1
         A[2 * i+1, 14 + camera_indices[i] * 9:14 + camera_indices[i] * 9 + 9] = 1
-
+        # world points
         A[2 * i, 14 + n_cameras * 9 + point_indices[i] * 2]=1
         A[2 * i+1, 14 + n_cameras * 9 + point_indices[i] * 2] = 1
-    """i = np.arange(camera_indices.size)
+        """
+    i = np.arange(camera_indices.size)
     for s in range(9):
-        A[2 * i, 13 + camera_indices * 9 + s] = 1
-        A[2 * i + 1, 13 + camera_indices * 9 + s] = 1
-
+        A[2 * i, 14+camera_indices * 9 + s] = 1
+        A[2 * i + 1,14+ camera_indices * 9 + s] = 1
     for s in range(2):
-        A[2 * i, 13 + n_cameras * 9 + point_indices * 2 + s] = 1
-        A[2 * i + 1, 13 + n_cameras * 9 + point_indices * 2 + s] = 1"""
+        A[2 * i, 14+n_cameras * 9 + point_indices * 2 + s] = 1
+        A[2 * i + 1, 14+n_cameras * 9 + point_indices * 2 + s] = 1
     fig = plt.figure()
-    plt.spy(A[:30,:30])
+    plt.spy(A)
     plt.show()
     fig.savefig('sparse.png', dpi=500)
     return A
@@ -451,8 +453,8 @@ if __name__ == '__main__':
     #intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
     #distCoeffs = np.array([0.117, -0.298, 0.001, 0,0.142])
     #spark parameters from pix4d 2
-    intrinsic = np.array([[2902, 0, 1980], [0, 2902, 1440], [0, 0, 1]])
-    distCoeffs = np.array([0.118, -0.277, 0.001, 0,0.120])
+    intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
+    distCoeffs = np.array([0.117, -0.298, 0.001, 0,0.1420])
     #spark estimated parameters
     #intrinsic = np.array([[3968 * 0.638904348949862, 0, 2048], [0, 2976 * 0.638904348949862, 1536], [0, 0, 1]])
     #distCoeffs = np.array([0.06756436352714615, -0.09146430991012529, 0, 0])
@@ -494,8 +496,7 @@ if __name__ == '__main__':
 
     print('mean residuals= %f' % (np.mean(np.abs(f0))))
     A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
-
-    res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
+    res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4,xtol=1e-12, method='trf',
                         args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
     print('performed bundle adjustement')
     plt.plot(res.fun)

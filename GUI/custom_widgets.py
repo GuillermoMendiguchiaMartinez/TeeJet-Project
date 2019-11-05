@@ -51,7 +51,7 @@ class View(QtWidgets.QLabel):
 
     def show_image(self):
         masked_img=self.image.copy()
-        masked_img[self.mask_downscaled>0]=(255,0,0)
+        masked_img[self.mask_downscaled>0]=(0,0,255)
         image_org = cv2.addWeighted(masked_img, 0.4, self.image, 0.6, 0)
         image_converted=cv2.cvtColor(image_org,cv2.COLOR_RGB2BGR)
 
