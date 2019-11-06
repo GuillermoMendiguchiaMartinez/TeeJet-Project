@@ -15,8 +15,8 @@ class View(QtWidgets.QLabel):
         self.mask=np.zeros((10,10)).astype('uint8')
         self.mask_downscaled=np.zeros((10,10)).astype('uint8')
         self.image_org=self.image
-        QtWidgets.QLabel.__init__(self, parent)
         self.scaling_factor=1
+        QtWidgets.QLabel.__init__(self, parent)
 
 
     def mouseMoveEvent(self, e) -> None:

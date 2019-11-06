@@ -21,6 +21,7 @@ class Ui(QtWidgets.QMainWindow):
         self.show()
 
         self.SegmentationViewer.onMouseMoved.connect(self.process_mouse_input)
+
         self.SegmentationViewer.onMousePressed.connect(self.process_mouse_input)
         self.threshold_slider.valueChanged.connect(self.process_threshold_slider)
     def process_mouse_input(self):
@@ -69,7 +70,8 @@ if __name__ == '__main__':
     window = Ui()
     window.mapWgt.setZoomFactor(1)
     window.mapWgt.load(QtCore.QUrl('http://localhost:8866'))
-    window.show()
-    window.SegmentationViewer.load_image(r'C:\Users\bedab\OneDrive\AAU\TeeJet-Project\res_image.jpg')
+
+    window.SegmentationViewer.load_image(r'C:\Users\krist\Desktop\pics\combinedblurlevels.png')
     window.SegmentationViewer.show_image()
+    window.show()
     sys.exit(app.exec_())
