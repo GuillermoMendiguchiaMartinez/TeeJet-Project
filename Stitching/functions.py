@@ -259,22 +259,20 @@ def prepare_data(matrix_idx, features, matches, point_world, point_world_idx, ho
     print("Total number of residuals: {}".format(m))
     return camera_params, points_world_frame, homographys, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations
 
-
 def residuals(params, n_cameras, n_points, n_observations, camera_indicies, point_indicies, points_camera_frame):
     intrinsic = params[:9].reshape(3, 3)
     undistort_coeffs = params[9:14]
     homographys = params[14:14 + n_cameras * 9].reshape(n_cameras, 3, 3)
     points_world_frame = params[14 + n_cameras * 9:].reshape(n_points, 2)
 
+    point_distorted = points_camera_frame.astype('float32')
+    point_undistorted = cv2.undistortPoints(point_distorted.reshape(-1, int(point_distorted.size/2), 2), intrinsic, undistort_coeffs,
+                                            R=np.eye(3), P=intrinsic)
     residuals = np.empty(n_observations * 2)
     for i in range(n_observations):
-        point_distorted = points_camera_frame[i].astype('float32')
-        point_undistorted = cv2.undistortPoints(point_distorted.reshape(-1, 1, 2), intrinsic, undistort_coeffs,
-                                                R=np.eye(3), P=intrinsic)
-        point_warped = apply_homography_to_point(point_undistorted, homographys[camera_indicies[i]])
+        point_warped = apply_homography_to_point(point_undistorted[0][i], homographys[camera_indicies[i]])
         residuals[2 * i:2 * i + 2] = (point_warped - points_world_frame[point_indicies[i]]).reshape(2)
     return residuals
-
 
 def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices):
     camera_indices = np.array(camera_indices)
@@ -437,9 +435,9 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    MAX_MATCHES = 20000
+    MAX_MATCHES = 15000
 
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos4"  # Enter Directory of all images
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos5"  # Enter Directory of all images
     data_path = os.path.join(img_dir, '*g')
     files = glob.glob(data_path)
     data = []
@@ -472,7 +470,7 @@ if __name__ == '__main__':
 
     idx, features, matches, points_world, point_world_idx, homographys = generate_matrixes(data, w,MAX_MATCHES=MAX_MATCHES,
                                                                                            center_image=center_coordinates,
-                                                                                           sift_threshold=0.7,ransac_threshold=5,use_inliers_only=True)
+                                                                                           sift_threshold=0.7,ransac_threshold=4,use_inliers_only=True)
     print('generated matrixes')
 
     camera_params, points_world_frame, homographys_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
@@ -496,7 +494,7 @@ if __name__ == '__main__':
 
     print('mean residuals= %f' % (np.mean(np.abs(f0))))
     A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
-    res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4,xtol=1e-12, method='trf',
+    res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5,xtol=1e-8, method='trf',
                         args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
     print('performed bundle adjustement')
     plt.plot(res.fun)
