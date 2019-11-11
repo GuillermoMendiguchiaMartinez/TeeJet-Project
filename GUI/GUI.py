@@ -49,6 +49,8 @@ class Ui(QtWidgets.QMainWindow):
                                                self.threshold_slider.value())
                 self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape)
                 self.threshold_slider.setEnabled(True)
+        #Show zoomed image
+        self.ZoomViewer.show_zoomed_image(self.image, self.SegmentationViewer.position, 100)
 
     def process_threshold_slider(self):
         self.mask_downscaled = segment(self.image_downscaled, self.segmentation_color, self.threshold_slider.value())
@@ -89,7 +91,7 @@ if __name__ == '__main__':
     window.mapWgt.setZoomFactor(1)
     window.mapWgt.load(QtCore.QUrl('http://localhost:8866'))
 
-    window.load_image(r'C:\Users\bedab\OneDrive\AAU\TeeJet-Project\res_image.jpg')
+    window.load_image(r'C:\Users\krist\OneDrive\AAU\TeeJet-Project\res_image.jpg')
     window.SegmentationViewer.show_image(window.image_downscaled, window.mask_downscaled, window.image.shape)
     window.show()
     sys.exit(app.exec_())
