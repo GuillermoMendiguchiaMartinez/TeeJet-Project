@@ -23,14 +23,21 @@ class Ui(QtWidgets.QMainWindow):
         self.mask = np.zeros((10, 10)).astype('uint8')
         self.mask_downscaled = np.zeros((10, 10)).astype('uint8')
         self.image_downscaled = self.image
+        self.position_press = (0, 0)
+        self.zoom_slider_value = 505
+        self.zoom_position = (0, 0)
 
         self.show()
 
         self.SegmentationViewer.onMouseMoved.connect(self.process_mouse_input)
-        self.SegmentationViewer.onWidgetResized.connect(self.process_viewer_resize)
-
         self.SegmentationViewer.onMousePressed.connect(self.process_mouse_input)
+        self.SegmentationViewer.onWidgetResized.connect(self.process_viewer_resize)
         self.threshold_slider.valueChanged.connect(self.process_threshold_slider)
+
+        self.ZoomViewer.onMouseMoved.connect(self.process_zoom_mouse_input)
+        self.ZoomViewer.onMousePressed.connect(self.process_zoom_mouse_input)
+        self.ZoomViewer.onWidgetResized.connect(self.process_zoom_resize)
+        self.zoom_slider.valueChanged.connect(self.process_zoom_slider)
 
     def process_mouse_input(self):
         x = self.SegmentationViewer.position.x()
@@ -43,14 +50,21 @@ class Ui(QtWidgets.QMainWindow):
             self.color_label.setText('color: ' + (str(self.color)))
 
             if self.SegmentationViewer.buttons == QtCore.Qt.LeftButton:
+                self.position_press = (self.SegmentationViewer.position.x(), self.SegmentationViewer.position.y())
                 self.segmentation_color = self.image[int(math.floor(y)), int(math.floor(x))]
                 self.chosen_color_label.setText('chosen color: ' + (str(self.segmentation_color)))
                 self.mask_downscaled = segment(self.image_downscaled, self.segmentation_color,
                                                self.threshold_slider.value())
                 self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape)
                 self.threshold_slider.setEnabled(True)
-        #Show zoomed image
-        self.ZoomViewer.show_zoomed_image(self.image, self.SegmentationViewer.position, 100)
+
+                self.zoom_position = self.ZoomViewer.show_zoomed_image(self.image, self.position_press, self.zoom_slider_value)
+
+    def process_zoom_mouse_input(self):
+        x_zoom_proportional = self.ZoomViewer.position.x() + self.zoom_position[0]
+        y_zoom_proportional = self.ZoomViewer.position.y() + self.zoom_position[1]
+        self.x_label.setText('x: %d' % (x_zoom_proportional))
+        self.y_label.setText('y: %d' % (y_zoom_proportional))
 
     def process_threshold_slider(self):
         self.mask_downscaled = segment(self.image_downscaled, self.segmentation_color, self.threshold_slider.value())
@@ -77,6 +91,14 @@ class Ui(QtWidgets.QMainWindow):
 
     def process_viewer_resize(self):
         self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape)
+
+    def process_zoom_resize(self):
+        if self.SegmentationViewer.position !=None:
+            self.ZoomViewer.show_zoomed_image(self.image, self.position_press, self.zoom_slider_value)
+
+    def process_zoom_slider(self):
+        self.zoom_slider_value = self.zoom_slider.value()
+        self.ZoomViewer.show_zoomed_image(self.image, self.position_press, self.zoom_slider_value)
 
 
 class MyThread(threading.Thread):
