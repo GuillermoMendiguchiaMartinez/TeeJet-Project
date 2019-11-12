@@ -9,6 +9,87 @@ import os
 from scipy.sparse import lil_matrix
 from tqdm import tqdm
 from scipy.optimize import least_squares
+import geopy.distance
+from GPSPhoto import gpsphoto
+import multiprocessing as mp
+
+
+import copyreg
+
+
+def patch_cv2_pickiling():
+    # Create the bundling between class and arguments to save for Keypoint class
+    # See : https://stackoverflow.com/questions/50337569/pickle-exception-for-cv2-boost-when-using-multiprocessing/50394788#50394788
+    def _pickle_keypoint(keypoint): #  : cv2.KeyPoint
+        return cv2.KeyPoint, (
+            keypoint.pt[0],
+            keypoint.pt[1],
+            keypoint.size,
+            keypoint.angle,
+            keypoint.response,
+            keypoint.octave,
+            keypoint.class_id,
+        )
+    # C++ Constructor, notice order of arguments :
+    # KeyPoint (float x, float y, float _size, float _angle=-1, float _response=0, int _octave=0, int _class_id=-1)
+
+    # Apply the bundling to pickle
+    copyreg.pickle(cv2.KeyPoint().__class__, _pickle_keypoint)
+
+    def _pickle_dmatch(dmatch): #  : cv2.DMatch
+        return cv2.DMatch, (
+            dmatch.queryIdx,
+            dmatch.trainIdx,
+            dmatch.imgIdx,
+            dmatch.distance
+        )
+
+    copyreg.pickle(cv2.DMatch().__class__, _pickle_dmatch)
+def mc_matcher(args):
+    position = args[0]
+    target = args[1]
+    sift_threshold = args[2]
+    use_inliers_only = args[3]
+    features = args[4]
+    goodmatches_threshold = args[5]
+    ransac_threshold = args[6]
+
+    FLANN_INDEX_KDTREE = 0
+    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+    search_params = dict(checks=50)  # or pass empty dictionary
+    flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+    # extracting the keypoints
+    all_matches = flann.knnMatch(features[position][1], features[target][1], k=2)
+    goodmatches = []
+    for m, n in all_matches:
+        if m.distance < sift_threshold * n.distance:
+            goodmatches.append(m)
+
+    if len(goodmatches) < goodmatches_threshold:
+        return False
+
+    # matching
+    keypoints1, _ = features[position]
+    keypoints2, _ = features[target]
+    src_pts = np.float32([keypoints1[m.queryIdx].pt for m in goodmatches]).reshape(-1, 1, 2)
+    dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in goodmatches]).reshape(-1, 1, 2)
+    M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, ransac_threshold)
+
+    # generating the output
+    homography_rel = {}
+    homography_rel[(position, target)] = M
+
+    matches = {}
+    if use_inliers_only:
+        goodmatches = np.array(goodmatches)
+        goodmatches = goodmatches.reshape(mask.shape)
+        matches[(position, target)] = goodmatches[mask == 1]
+    else:
+        matches[(position, target)] = goodmatches
+
+    patch_cv2_pickiling()
+    return (matches, homography_rel)
 
 
 def match_and_extract_points(position, target, sift_threshold,
@@ -65,7 +146,7 @@ def match_and_extract_points(position, target, sift_threshold,
                         print('Warning 2 points of same image added to same world point')
                         print('query')
                         print(point_world_idx[train])
-                        point_world[point_world_idx[train]][3]=False
+                        point_world[point_world_idx[train]][3] = False
                     point_world[point_world_idx[train]][2].add(matrix_idx[position[0], position[1]])
                     point_world_idx[query] = point_world_idx[train]
             else:
@@ -76,7 +157,7 @@ def match_and_extract_points(position, target, sift_threshold,
                         print('Warning 2 points of same image added to same world point')
                         print('train')
                         print(point_world_idx[query])
-                        point_world[point_world_idx[query]][3]=False
+                        point_world[point_world_idx[query]][3] = False
                     point_world[point_world_idx[query]][2].add(matrix_idx[target[0], target[1]])
                     point_world_idx[train] = point_world_idx[query]
                 else:
@@ -93,7 +174,7 @@ def match_and_extract_points(position, target, sift_threshold,
                             print('Warning 2 points of same image added to same world point')
                             print('merge')
                             print(point_world_idx[query])
-                            point_world[point_world_idx[query]][3]=False
+                            point_world[point_world_idx[query]][3] = False
 
                         point_world[point_world_idx[query]][2] = point_world[point_world_idx[query]][
                             2].union(point_world[point_world_idx[train]][2])
@@ -132,88 +213,60 @@ def homography_path_iter(position, target, matrix_idx, homographys_rel, homograp
     return result
 
 
-def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0), use_inliers_only=True,
-                      ransac_threshold=10, sift_threshold=0.7,verbose=True):
+def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, center_image=(0, 0), use_inliers_only=True,
+                      ransac_threshold=10, sift_threshold=0.7, verbose=True,goodmatches_threshold=4):
+    # setting up multiprocessing
+    nprocs = mp.cpu_count()
+    pool = mp.Pool(processes=nprocs)
+    # setting up feature extractor and matcher
     sift = cv2.xfeatures2d.SIFT_create(MAX_MATCHES)
-    FLANN_INDEX_KDTREE = 0
-    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    search_params = dict(checks=50)  # or pass empty dictionary
-    flann = cv2.FlannBasedMatcher(index_params, search_params)
-
-    h = math.ceil(len(list_of_images) / w)
-
-    matrix_idx = np.arange((h * w))
-    matrix_idx = matrix_idx.reshape(h, w)
-    if matrix_idx.shape[0] != h:
-        matrix_idx = np.transpose(matrix_idx)
-    print(matrix_idx.shape)
-    matrix_idx[matrix_idx >= len(list_of_images)] = -255
     if verbose:
         print('start feature extraction')
-    features = {}
-    with tqdm(total=h*w, desc="feature extraction",disable=not verbose) as tExtraction:
-        for i in range(h):
-            for j in range(w):
-                idx = matrix_idx[i, j]
-                if idx != -255:
-                    img = cv2.cvtColor(list_of_images[idx], cv2.COLOR_RGB2GRAY)
+    features = []
 
-                    features[(i, j)] = sift.detectAndCompute(img, None)
-                tExtraction.update()
+    for i in tqdm(range(len(list_of_images)), desc="feature extraction", disable=not verbose):
+
+        img = cv2.cvtColor(list_of_images[i], cv2.COLOR_RGB2GRAY)
+
+        features.append(sift.detectAndCompute(img, None))
 
     matches = {}
     homographys_rel = {}
     point_world_idx = {}
     point_world = []
-    if verbose:
-        print('start matching')
-    with tqdm(total=h * w, desc="matching", disable=not verbose) as tMatching:
-        for i in range(h):
-            for j in range(w):
-                if i < h - 1:
 
-                    if matrix_idx[i, j] >= 0 and matrix_idx[i + 1, j] >= 0:
-                        matches, homographys_rel, point_world_idx, point_world = match_and_extract_points((i, j),
-                                                                                                          (i + 1, j),
-                                                                                                          sift_threshold,
-                                                                                                          matrix_idx,
-                                                                                                          ransac_threshold,
-                                                                                                          use_inliers_only,
-                                                                                                          flann, features,
-                                                                                                          matches,
-                                                                                                          homographys_rel,
-                                                                                                          point_world_idx,
-                                                                                                          point_world)
+    for i in tqdm(range(len(list_of_images)), desc="matching", disable=not verbose):
 
+        rel_distance = np.zeros((len(list_of_images)))
+        for j in range(len(list_of_images)):
+            rel_distance[j] = (geopy.distance.distance(gps_coordinates[i], gps_coordinates[j]).meters)
+        closest_images_indices = np.argsort(rel_distance)
 
-                if j < w - 1:
-                    if matrix_idx[i, j] >= 0 and matrix_idx[i, j + 1] >= 0:
-                        matches, homographys_rel, point_world_idx, point_world = match_and_extract_points((i, j),
-                                                                                                      (i, j + 1),
-                                                                                                      sift_threshold,
-                                                                                                      matrix_idx,
-                                                                                                      ransac_threshold,
-                                                                                                      use_inliers_only,
-                                                                                                      flann, features,
-                                                                                                      matches,
-                                                                                                      homographys_rel,
-                                                                                                      point_world_idx,
-                                                                                                      point_world)
-                tMatching.update()
+        results=[]
+        for j in range(math.ceil((len(list_of_images)-1) / nprocs)):
+            slice=closest_images_indices[j*nprocs+1:min(j*nprocs+nprocs+1,len(closest_images_indices))]
+            args=[]
+            for idx in slice:
+                args.append((i,idx,sift_threshold,use_inliers_only,features,goodmatches_threshold,ransac_threshold))
+                print(args[-1][1])
+            results=results+pool.map(mc_matcher,args)
+            if results[-1]==False and results[-2]==False:
+                break
+        print(results)
 
-    # calculate the homographys from the center image to each image
+    """# calculate the homographys from the center image to each image
     homographys_abs = [None] * matrix_idx[matrix_idx != -255].size
     for i in range(h):
         for j in range(w):
             if matrix_idx[(i, j)] != -255:
                 homographys_abs[matrix_idx[i, j]] = homography_path_iter(center_image, (i, j), matrix_idx,
                                                                          homographys_rel)
-    point_world_usable=[]
+    point_world_usable = []
     for point in point_world:
         if point[3]:
             point_world_usable.append(point)
 
-    point_world=point_world_usable
+    point_world = point_world_usable
     # calculate an estimate for each point_world
     for i in range(len(point_world)):
         point_idx = list(point_world[i][1])[0]
@@ -222,12 +275,10 @@ def generate_matrixes(list_of_images, w, MAX_MATCHES=5000, center_image=(0, 0), 
         est_world_pos = apply_homography_to_point(start_coord, est_homography)
         point_world[i][0] = est_world_pos
 
-
-    return matrix_idx, features, matches, point_world, point_world_idx, homographys_abs
+    return matrix_idx, features, matches, point_world, point_world_idx, homographys_abs"""
 
 
 def prepare_data(matrix_idx, features, matches, point_world, point_world_idx, homographys_abs, intrinsic, dist_coeffs):
-
     n_cameras = len(homographys_abs)
     n_points = len(point_world)
 
@@ -259,6 +310,7 @@ def prepare_data(matrix_idx, features, matches, point_world, point_world_idx, ho
     print("Total number of residuals: {}".format(m))
     return camera_params, points_world_frame, homographys, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations
 
+
 def residuals(params, n_cameras, n_points, n_observations, camera_indicies, point_indicies, points_camera_frame):
     intrinsic = params[:9].reshape(3, 3)
     undistort_coeffs = params[9:14]
@@ -266,13 +318,15 @@ def residuals(params, n_cameras, n_points, n_observations, camera_indicies, poin
     points_world_frame = params[14 + n_cameras * 9:].reshape(n_points, 2)
 
     point_distorted = points_camera_frame.astype('float32')
-    point_undistorted = cv2.undistortPoints(point_distorted.reshape(-1, int(point_distorted.size/2), 2), intrinsic, undistort_coeffs,
+    point_undistorted = cv2.undistortPoints(point_distorted.reshape(-1, int(point_distorted.size / 2), 2), intrinsic,
+                                            undistort_coeffs,
                                             R=np.eye(3), P=intrinsic)
     residuals = np.empty(n_observations * 2)
     for i in range(n_observations):
         point_warped = apply_homography_to_point(point_undistorted[0][i], homographys[camera_indicies[i]])
         residuals[2 * i:2 * i + 2] = (point_warped - points_world_frame[point_indicies[i]]).reshape(2)
     return residuals
+
 
 def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices):
     camera_indices = np.array(camera_indices)
@@ -294,11 +348,11 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
         """
     i = np.arange(camera_indices.size)
     for s in range(9):
-        A[2 * i, 14+camera_indices * 9 + s] = 1
-        A[2 * i + 1,14+ camera_indices * 9 + s] = 1
+        A[2 * i, 14 + camera_indices * 9 + s] = 1
+        A[2 * i + 1, 14 + camera_indices * 9 + s] = 1
     for s in range(2):
-        A[2 * i, 14+n_cameras * 9 + point_indices * 2 + s] = 1
-        A[2 * i + 1, 14+n_cameras * 9 + point_indices * 2 + s] = 1
+        A[2 * i, 14 + n_cameras * 9 + point_indices * 2 + s] = 1
+        A[2 * i + 1, 14 + n_cameras * 9 + point_indices * 2 + s] = 1
     fig = plt.figure()
     plt.spy(A)
     plt.show()
@@ -443,76 +497,74 @@ if __name__ == '__main__':
     data = []
     list_of_lists_of_images = []
     # oneplus 7 pro estimated parameters
-    #intrinsic = np.array([[4347.358087366480, 0, 1780.759210199340], [0, 4349.787712956160, 1518.540335312340], [0, 0, 1]])
-    #distCoeffs = np.array([0.0928, -0.7394, 0, 0])
+    # intrinsic = np.array([[4347.358087366480, 0, 1780.759210199340], [0, 4349.787712956160, 1518.540335312340], [0, 0, 1]])
+    # distCoeffs = np.array([0.0928, -0.7394, 0, 0])
 
-
-    #spark parameters from pix4d
-    #intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
-    #distCoeffs = np.array([0.117, -0.298, 0.001, 0,0.142])
-    #spark parameters from pix4d 2
+    # spark parameters from pix4d
+    # intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
+    # distCoeffs = np.array([0.117, -0.298, 0.001, 0,0.142])
+    # spark parameters from pix4d 2
     intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
-    distCoeffs = np.array([0.117, -0.298, 0.001, 0,0.1420])
-    #spark estimated parameters
-    #intrinsic = np.array([[3968 * 0.638904348949862, 0, 2048], [0, 2976 * 0.638904348949862, 1536], [0, 0, 1]])
-    #distCoeffs = np.array([0.06756436352714615, -0.09146430991012529, 0, 0])
+    distCoeffs = np.array([0.117, -0.298, 0.001, 0, 0.1420])
+    # spark estimated parameters
+    # intrinsic = np.array([[3968 * 0.638904348949862, 0, 2048], [0, 2976 * 0.638904348949862, 1536], [0, 0, 1]])
+    # distCoeffs = np.array([0.06756436352714615, -0.09146430991012529, 0, 0])
     data = []
-    data_undistorted=[]
+    gps_coordinates = []
+    data_undistorted = []
     for f1 in files:
         img1 = cv2.imread(f1)
         cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
         data_undistorted.append(cv2.undistort(img1, intrinsic, distCoeffs))
         data.append(img1)
+        gps_coord = gpsphoto.getGPSData(f1)
+        gps_coordinates.append((gps_coord['Latitude'], gps_coord['Longitude']))
 
-    w = 5
-    t = len(data)
-    center_coordinates = (0, 2)
+    center_image = 5
+    patch_cv2_pickiling()
+    generate_matrixes(data, gps_coordinates, MAX_MATCHES=MAX_MATCHES, center_image=center_image, sift_threshold=0.7,
+                  ransac_threshold=4, use_inliers_only=True)
+"""print('generated matrixes')
 
-    idx, features, matches, points_world, point_world_idx, homographys = generate_matrixes(data, w,MAX_MATCHES=MAX_MATCHES,
-                                                                                           center_image=center_coordinates,
-                                                                                           sift_threshold=0.7,ransac_threshold=4,use_inliers_only=True)
-    print('generated matrixes')
+camera_params, points_world_frame, homographys_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
+    idx, features,
+    matches,
+    points_world,
+    point_world_idx,
+    homographys,
+    intrinsic,
+    distCoeffs)
+x0 = np.hstack((camera_params.ravel(), homographys_ba.ravel(), points_world_frame.ravel()))
+print('made initial guess')
+f0 = residuals(x0, n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
+plt.plot(f0)
+plt.show()
 
-    camera_params, points_world_frame, homographys_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
-        idx, features,
-        matches,
-        points_world,
-        point_world_idx,
-        homographys,
-        intrinsic,
-        distCoeffs)
-    x0 = np.hstack((camera_params.ravel(), homographys_ba.ravel(), points_world_frame.ravel()))
-    print('made initial guess')
-    f0 = residuals(x0, n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
-    plt.plot(f0)
-    plt.show()
+res_image = multiple_v3(data_undistorted, homographys, 1)
+plt.imshow(res_image)
+cv2.imwrite('res_image_guess.jpg', res_image)
 
-    res_image = multiple_v3(data_undistorted, homographys, 1)
-    plt.imshow(res_image)
-    cv2.imwrite('res_image_guess.jpg', res_image)
+print('mean residuals= %f' % (np.mean(np.abs(f0))))
+A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
+res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5, xtol=1e-8, method='trf',
+                    args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
+print('performed bundle adjustement')
+plt.plot(res.fun)
+plt.show()
+print('mean residuals= %f' % (np.mean(np.abs(res.fun))))
 
+intrinsic = res.x[:9].reshape(3, 3)
+distCoeffs = res.x[9:14]
+homographys = res.x[14:14 + n_cameras * 9].reshape(n_cameras, 3, 3)
 
-    print('mean residuals= %f' % (np.mean(np.abs(f0))))
-    A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
-    res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5,xtol=1e-8, method='trf',
-                        args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
-    print('performed bundle adjustement')
-    plt.plot(res.fun)
-    plt.show()
-    print('mean residuals= %f'%(np.mean(np.abs(res.fun))))
+for i in range(len(data)):
+    data[i] = cv2.undistort(data[i], intrinsic, distCoeffs)
 
-    intrinsic = res.x[:9].reshape(3, 3)
-    distCoeffs = res.x[9:14]
-    homographys = res.x[14:14 + n_cameras * 9].reshape(n_cameras, 3, 3)
-
-    for i in range(len(data)):
-        data[i]=cv2.undistort(data[i], intrinsic, distCoeffs)
-
-    res_image = multiple_v3(data, homographys, 1)
-    plt.imshow(res_image)
-    cv2.imwrite('res_image.jpg', res_image)
-    plt.show()
-    print('intrinsic matrix is:')
-    print(intrinsic)
-    print('distortion coeffs are:')
-    print (distCoeffs)
+res_image = multiple_v3(data, homographys, 1)
+plt.imshow(res_image)
+cv2.imwrite('res_image.jpg', res_image)
+plt.show()
+print('intrinsic matrix is:')
+print(intrinsic)
+print('distortion coeffs are:')
+print(distCoeffs)"""
