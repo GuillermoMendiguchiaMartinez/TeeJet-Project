@@ -5,7 +5,6 @@ import numpy as np
 import pyproj as proj
 from tqdm import tqdm
 
-
 def global2local2(point, ref_point):
     crs_wgs = proj.Proj(init='epsg:4326')  # assuming you're using WGS84 geographic coordinate system
 
@@ -144,6 +143,8 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
         lonlat_wpts.append(local2global(waypt, ref_point))
 
     print("Global coordinates are (lat, lon):", lonlat_wpts)
+    np.array(lonlat_wpts)
+    np.save("waypts.npy", lonlat_wpts)
 
 if __name__ == '__main__':
     corners = [(9.93758976, 57.04503142),(9.93810475,57.04265598),(9.94246066,57.04413262)]
