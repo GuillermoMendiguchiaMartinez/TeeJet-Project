@@ -37,7 +37,6 @@ def global2local(point, ref_point):
     dy = dlat * c_earth / 360
     return dx, dy
 
-
 def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
     '''
     :param coordinates: list of global coordinates for the map, corners of the area.
@@ -117,6 +116,7 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
 
     centers = []
     for j in range(int(n_grids_x)):
+        centers_local = []                      # Variable to store inverted coordinates
         for i in range(int(n_grids_y)):
             patch_l = map_array[cell_size_y*i:cell_size_y*i+cell_size_y, cell_size_x*j:cell_size_x*j+cell_size_x]
             #print(patch_l)
@@ -127,8 +127,14 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
                 x_center = cell_size_x*j+cell_size_x*0.5
                 y_center = cell_size_x*i+cell_size_x*0.5
                 coords = (x_center-0.5, y_center-0.5)
-                centers.append(coords)
-    print("Local coordinates (x,y)")
+                centers_local.append(coords)            # Store all the coordinates
+        if j %2 != 0:                                   # If the y component is not divisible by 2
+            centers_local.reverse()                     # Invert the list, so they are in decreasing order
+        if centers_local != None:
+            centers = centers + centers_local           # Store the final coordinate order for waypoint navigation
+
+
+    print("Local coordinates (y,x)")
     print(centers)
     map_color=cv2.cvtColor((map_array*255).astype('uint8'),cv2.COLOR_GRAY2BGR)
     for center in centers:
@@ -138,13 +144,13 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
     waypts_m=[]
     for center in centers:
         waypts_m.append((center[0]*pixel_size, center[1]*pixel_size))
-    lonlat_wpts = []
+    latlon_wpts = []
     for waypt in tqdm(waypts_m):
-        lonlat_wpts.append(local2global(waypt, ref_point))
+        latlon_wpts.append(local2global(waypt, ref_point))
 
-    print("Global coordinates are (lat, lon):", lonlat_wpts)
-    np.array(lonlat_wpts)
-    np.save("waypts.npy", lonlat_wpts)
+    print("Global coordinates are (lat, lon):", latlon_wpts)
+    np.array(latlon_wpts)
+    np.save("waypts.npy", latlon_wpts)
 
 if __name__ == '__main__':
     corners = [(9.93758976, 57.04503142),(9.93810475,57.04265598),(9.94246066,57.04413262)]
