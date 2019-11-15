@@ -30,7 +30,7 @@ def segment(img,color,thresholdwidth,perform_opening=False,perform_closing=False
         kernelClose = np.ones((20, 20))
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernelClose)
     print('segmentation completed')
-    print(mask.shape)
+    #print(mask.shape)
     return mask
 
 
