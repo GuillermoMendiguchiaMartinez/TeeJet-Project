@@ -69,7 +69,7 @@ def mc_matcher(args):
         if m.distance < sift_threshold * n.distance:
             goodmatches.append(m)
 
-    print("process %d: matching %d and %d got %d matches" % (os.getpid(),position, target, len(goodmatches)))
+    print("process %d: matching %d and %d got %d matches" % (os.getpid(), position, target, len(goodmatches)))
 
     if len(goodmatches) < goodmatches_threshold:
         return False
@@ -89,7 +89,7 @@ def mc_matcher(args):
         matches = goodmatches[mask == 1]
     else:
         matches = goodmatches
-    print("matching %d and %d got %d matches"%(position,target,len(goodmatches)))
+    print("matching %d and %d got %d matches" % (position, target, len(goodmatches)))
     patch_cv2_pickiling()
     return (position, target, matches, M)
 
@@ -103,7 +103,7 @@ def homography_path_iter(position, target, predecessors, homographys_rel, homogr
         print("failed to connect image with index: %d" % (position))
         return False
     else:
-        homography = np.matmul( homographys_rel[(predecessors[position],position)],homography)
+        homography = np.matmul(homographys_rel[(predecessors[position], position)], homography)
 
         return homography_path_iter(predecessors[position], target, predecessors, homographys_rel, homography)
 
@@ -111,9 +111,10 @@ def homography_path_iter(position, target, predecessors, homographys_rel, homogr
 
 
 def perform_djikstra(Graph, start_index):
-    Graph[[0, start_index]] = Graph[[start_index, 0]]
-    Graph[:, [0, start_index]] = Graph[:, [start_index, 0]]
-    dist_matrix, predecessors = dijkstra(csgraph=Graph, directed=False, indices=0, return_predecessors=True)
+    Graph_temp = Graph.copy()
+    Graph_temp[[0, start_index]] = Graph_temp[[start_index, 0]]
+    Graph_temp[:, [0, start_index]] = Graph_temp[:, [start_index, 0]]
+    dist_matrix, predecessors = dijkstra(csgraph=Graph_temp, directed=False, indices=0, return_predecessors=True)
 
     predecessors[0] = predecessors[start_index]
     predecessors[start_index] = -9999
@@ -123,12 +124,12 @@ def perform_djikstra(Graph, start_index):
 
     predecessors[temp_0] = start_index
     predecessors[temp_start_idx] = 0
-
-    return predecessors
+    cost = np.sum(dist_matrix)
+    return cost, predecessors
 
 
 def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inliers_only=True,
-                      ransac_threshold=10, sift_threshold=0.7, verbose=True, goodmatches_threshold=4,
+                      ransac_threshold=5, sift_threshold=0.7, verbose=True, goodmatches_threshold=4,
                       purge_multiples=True):
     # setting up multiprocessing
     nprocs = mp.cpu_count()
@@ -157,9 +158,9 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
         for j in range(len(list_of_images)):
             rel_distance.append(geopy.distance.distance(gps_coordinates[i], gps_coordinates[j]).meters)
         closest_images_indices = np.argsort(rel_distance)
-        for j in range(len(closest_images_indices)-1,-1,-1):
-            if closest_images_indices[j]==i:
-                closest_images_indices=np.delete(closest_images_indices,j)
+        for j in range(len(closest_images_indices) - 1, -1, -1):
+            if closest_images_indices[j] == i:
+                closest_images_indices = np.delete(closest_images_indices, j)
         closest_images_indices_unvisited = []
         for idx in closest_images_indices:
             if Graph[idx, i] == 0:
@@ -168,7 +169,7 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
 
         for j in range(math.ceil((len(closest_images_indices_unvisited)) / nprocs)):
             slice = closest_images_indices_unvisited[
-                    j * nprocs :min(j * nprocs + nprocs, len(closest_images_indices_unvisited))]
+                    j * nprocs:min(j * nprocs + nprocs, len(closest_images_indices_unvisited))]
             args = []
             for idx in slice:
                 args.append(
@@ -251,16 +252,18 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
             point_world_usable.append(point)
     point_world = point_world_usable
 
-    # chose image with the most connections as center image
-    center_image = np.argmax(np.sum(Graph != 0, axis=1))
+    # chose image with the best connections as center image
+    list_of_costs = []
+    list_of_predecessors = []
+    for i in range(len(list_of_images)):
+        cost, predecessors = perform_djikstra(Graph, i)
+        list_of_costs.append(cost)
+        list_of_predecessors.append(predecessors)
+    predecessors = list_of_predecessors[np.argmin(list_of_costs)]
+    center_image = np.argmin(list_of_costs)
     print('center_image is %d' % (center_image))
 
     # create the absolute homography estimates for all images
-    predecessors = perform_djikstra(Graph, center_image)
-    #dist_matrix, predecessors = dijkstra(csgraph=Graph, directed=False, indices=0, return_predecessors=True)
-    #center_image=0
-
-
     homographys_abs = [None] * len(list_of_images)
     for i in range(len(list_of_images)):
         homographys_abs[i] = homography_path_iter(i, center_image, predecessors, homographys_rel)
@@ -328,7 +331,7 @@ def residuals(params, n_cameras, n_points, n_observations, camera_indicies, poin
 
 
 def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices):
-    center_image=0
+    center_image = 0
     camera_indices = np.array(camera_indices)
     point_indices = np.array(point_indices)
     m = camera_indices.size * 2
@@ -387,8 +390,6 @@ def closest_image_map(height_ori, width_ori, coordinates, h_img, w_img, downscal
     xx, yy = np.meshgrid(y, x)
     shortest_distance = np.full_like(a, math.sqrt(height ** 2 + width ** 2), dtype=np.single)
     node = np.zeros_like(shortest_distance, dtype=np.uint8)
-    if verbose:
-        print(time.time() - start)
 
     for i in range(0, len(coordinates)):
         x_coord = coordinates[i][1]
@@ -460,8 +461,6 @@ def multiple_v3(list_of_images, homographys, margin=1):
         trans_img_centers[i][1] += offset_y
         trans_img_centers[i][0] += offset_x
 
-    trans_img_centers.append([0.5 * w, 0.5 * h])
-
     offset = np.array([[1, 0, offset_x], [0, 1, offset_y], [0, 0, 1]])
 
     closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, h, w, downscaling_factor=4, verbose=True)
@@ -479,12 +478,162 @@ def multiple_v3(list_of_images, homographys, margin=1):
     return result
 
 
+def Laplacian_Pyramid_Blending_with_mask(A, B, mask, num_levels=6):
+    # adapted from https://www.morethantechnical.com/2017/09/29/laplacian-pyramid-with-masks-in-opencv-python/
+    # which is based on: http://docs.opencv.org/3.0-beta/doc/py_tutorials/py_imgproc/py_pyramids/py_pyramids.html
+
+    # assume mask is float32 [0,1]
+    h = A.shape[0]
+    w = A.shape[1]
+    if h % 2 ** num_levels != 0:
+        h = h + h % 2 ** num_levels
+    if w % 2 ** num_levels != 0:
+        w = w + w % 2 ** num_levels
+    GA = np.zeros((h, w, 3), dtype='float32')
+    GB = np.zeros((h, w, 3), dtype='float32')
+    GM = np.zeros((h, w, 3), dtype='float32')
+
+    GA[:A.shape[0], :A.shape[1], :] = A.copy() / 255
+    GB[:A.shape[0], :A.shape[1], :] = B.copy() / 255
+    m = mask.copy().astype('float32')
+    GM[:A.shape[0], :A.shape[1], :] = cv2.cvtColor(m, cv2.COLOR_GRAY2BGR)
+
+    gpA = [GA]
+    gpB = [GB]
+    gpM = [GM]
+    for i in range(num_levels):
+        GA = cv2.pyrDown(GA)
+        GB = cv2.pyrDown(GB)
+        GM = cv2.pyrDown(GM)
+        gpA.append(np.float32(GA))
+        gpB.append(np.float32(GB))
+        gpM.append(np.float32(GM))
+
+    # generate Laplacian Pyramids for A,B and masks
+    lpA = [gpA[num_levels - 1]]  # the bottom of the Lap-pyr holds the last (smallest) Gauss level
+    lpB = [gpB[num_levels - 1]]
+    gpMr = [gpM[num_levels - 1]]
+    for i in range(num_levels - 1, 0, -1):
+        # Laplacian: subtract upscaled version of lower level from current level
+        # to get the high frequencies
+        LA = np.subtract(gpA[i - 1], cv2.pyrUp(gpA[i], dstsize=(gpA[i - 1].shape[1], gpA[i - 1].shape[0])))
+        LB = np.subtract(gpB[i - 1], cv2.pyrUp(gpB[i], dstsize=(gpB[i - 1].shape[1], gpB[i - 1].shape[0])))
+        lpA.append(LA)
+        lpB.append(LB)
+        gpMr.append(gpM[i - 1])  # also reverse the masks
+
+    # Now blend images according to mask in each level
+    LS = []
+    for la, lb, gm in zip(lpA, lpB, gpMr):
+        ls = la * gm + lb * (1.0 - gm)
+        ls = np.maximum(ls, 0)
+        LS.append(ls)
+
+    # now reconstruct
+    ls_ = LS[0]
+    for i in range(1, num_levels):
+        ls_ = cv2.pyrUp(ls_, dstsize=(LS[i].shape[1], LS[i].shape[0]))
+        ls_ = cv2.add(ls_, LS[i], dtype=cv2.CV_32F)
+    ls_ = np.minimum(ls_, 1)
+    return (ls_[:A.shape[0], :A.shape[1], :] * 255).astype('uint8')
+
+
+def gauss_kernel(sigma):
+    '''
+    defines gauss filter for a given sigma
+    :param sigma: sigma that is used to generate the kernel
+    :return: kernel of size 3 sigma x 3 sigma
+    '''
+    # calculating the needed size of the kernel for the given sigma
+    size = int(2 * np.ceil(4 * sigma) + 1)
+    # creating meshgrid for x and y
+    x, y = np.mgrid[-size // 2 + 1:size // 2 + 1, -size // 2 + 1:size // 2 + 1]
+    # calculating the kernel
+    kernel = np.exp(-((x ** 2 + y ** 2) / (2.0 * sigma ** 2)))
+    # normalize the kernel to 1
+    kernel = (kernel / kernel.sum()).astype('float64')
+    return kernel
+
+
+
+def multiple_v4(list_of_images, homographys, margin=1, verbose=False):
+    w = list_of_images[0].shape[1]
+    h = list_of_images[0].shape[0]
+
+    # calculate the transformed middle coordinates
+    trans_img_centers = []
+    for homography in homographys:
+        # center = apply_homography_to_point((offset_x * 0.5, offset_y * 0.5), np.matmul(offset, homography))
+        center = apply_homography_to_point((w * 0.5, h * 0.5), homography)
+        trans_img_centers.append(list(center))
+
+        # calculate the estimated max and min of the endresult:
+        y_max = 0.5 * h + margin * h
+        y_min = 0.5 * h - margin * h
+        x_max = 0.5 * w + margin * w
+        x_min = 0.5 * w - margin * w
+        for img in trans_img_centers:
+            y_max = int(round(max(y_max, img[1] + margin * h)))
+            y_min = int(round(min(y_min, img[1] - margin * h)))
+            x_max = int(round(max(x_max, img[0] + margin * w)))
+            x_min = int(round(min(x_min, img[0] - margin * w)))
+
+        w_res = x_max - x_min
+        h_res = y_max - y_min
+
+    offset_y = int(round(abs(y_min)))
+    offset_x = int(round(abs(x_min)))
+    for i in range(len(trans_img_centers)):
+        trans_img_centers[i][1] += offset_y
+        trans_img_centers[i][0] += offset_x
+
+    offset = np.array([[1, 0, offset_x], [0, 1, offset_y], [0, 0, 1]])
+
+    closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, h, w, downscaling_factor=4, verbose=True,
+                                        margin=1.5)
+    # prepare alpha channel values for the blending
+    mask_list = []
+    roi_list = []
+    sigma = 500
+    kernel = gauss_kernel(sigma)
+    normalization = np.zeros((h_res,w_res))
+
+    for i in tqdm(range(0, len(list_of_images)), desc="calculating blending masks", disable=not verbose):
+
+        x, y, dx, dy = cv2.boundingRect((closest_img_map==i+1).astype('uint8'))
+        roi = (
+        max(0, y - 3 * sigma), min(h_res, y + dy + 3 * sigma), max(0, x - 3 * sigma), min(w_res, x + dx + 3 * sigma))
+        mask = np.zeros((roi[1] - roi[0], roi[3] - roi[2]), dtype='float32')
+        mask[closest_img_map[roi[0]:roi[1], roi[2]: roi[3]] == i + 1] = 1
+        mask = cv2.filter2D(mask, ddepth=cv2.CV_32F, kernel=kernel)
+
+        normalization[roi[0]:roi[1], roi[2]: roi[3]] += mask
+        mask_list.append(mask)
+        roi_list.append(roi)
+
+
+
+
+    result = np.zeros((h_res, w_res, 3), dtype='float64')
+    for i in tqdm(range(0, len(homographys)), desc="combining images", disable=not verbose):
+        # add the connected images
+        M = np.matmul(offset, homographys[i])
+        warped_image = cv2.warpPerspective(list_of_images[i], M,
+                                           (result.shape[1], result.shape[0]))
+        roi=roi_list[i]
+        mask=mask_list[i]
+        #multiply the single channels
+        for i in range(3):
+            result[roi[0]:roi[1], roi[2]: roi[3],i]+= warped_image[roi[0]:roi[1], roi[2]: roi[3],i]*mask*normalization[roi[0]:roi[1], roi[2]: roi[3]]
+    return np.round(result).astype('uint8')
+
+
 if __name__ == '__main__':
     # %%
 
     from random import randrange
 
-    MAX_MATCHES = 15000
+    MAX_MATCHES = 3500
 
     img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos5"  # Enter Directory of all images
     data_path = os.path.join(img_dir, '*g')
@@ -519,7 +668,7 @@ if __name__ == '__main__':
     patch_cv2_pickiling()
     features, point_world, homographys_abs = generate_matrixes(data, gps_coordinates, MAX_MATCHES=MAX_MATCHES,
                                                                sift_threshold=0.7, ransac_threshold=5,
-                                                               use_inliers_only=True,goodmatches_threshold=10)
+                                                               use_inliers_only=True, goodmatches_threshold=10)
     print('generated matrixes')
 
     camera_params, points_world_frame, homographys_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
@@ -530,7 +679,7 @@ if __name__ == '__main__':
     plt.plot(f0)
     plt.show()
 
-    res_image = multiple_v3(data_undistorted, homographys_abs, 1)
+    res_image = multiple_v4(data_undistorted, homographys_abs, 1, verbose=True)
     plt.imshow(res_image)
     cv2.imwrite('res_image_guess.jpg', res_image)
 
@@ -550,7 +699,7 @@ if __name__ == '__main__':
     for i in range(len(data)):
         data[i] = cv2.undistort(data[i], intrinsic, distCoeffs)
 
-    res_image = multiple_v3(data, homographys, 1)
+    res_image = multiple_v4(data, homographys, 1, verbose=True)
     plt.imshow(res_image)
     cv2.imwrite('res_image.jpg', res_image)
     plt.show()
