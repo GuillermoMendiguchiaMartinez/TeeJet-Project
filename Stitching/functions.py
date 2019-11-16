@@ -555,7 +555,6 @@ def gauss_kernel(sigma):
     return kernel
 
 
-
 def multiple_v4(list_of_images, homographys, margin=1, verbose=False):
     w = list_of_images[0].shape[1]
     h = list_of_images[0].shape[0]
@@ -591,41 +590,52 @@ def multiple_v4(list_of_images, homographys, margin=1, verbose=False):
 
     closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, h, w, downscaling_factor=4, verbose=True,
                                         margin=1.5)
-    # prepare alpha channel values for the blending
-    mask_list = []
-    roi_list = []
-    sigma = 500
-    kernel = gauss_kernel(sigma)
-    normalization = np.zeros((h_res,w_res))
 
-    for i in tqdm(range(0, len(list_of_images)), desc="calculating blending masks", disable=not verbose):
+    sigma =5
 
+    k=3
+    result = [np.zeros((h_res, w_res, 3), dtype='float32')]*(k+1)
+    normalization=[np.zeros((h_res, w_res), dtype='float32')]*(k+1)
+    for i in tqdm(range(0, len(homographys)), desc="combining images", disable=not verbose):
+
+
+        # add the connected images
+        M = np.matmul(offset, homographys[i])
+        warped_image = cv2.warpPerspective(list_of_images[i], M,
+                                           (result[0].shape[1], result[0].shape[0]))
+
+        #multi_band_blending according to http://matthewalunbrown.com/papers/ijcv2007.pdf
         x, y, dx, dy = cv2.boundingRect((closest_img_map==i+1).astype('uint8'))
         roi = (
         max(0, y - 3 * sigma), min(h_res, y + dy + 3 * sigma), max(0, x - 3 * sigma), min(w_res, x + dx + 3 * sigma))
         mask = np.zeros((roi[1] - roi[0], roi[3] - roi[2]), dtype='float32')
         mask[closest_img_map[roi[0]:roi[1], roi[2]: roi[3]] == i + 1] = 1
-        mask = cv2.filter2D(mask, ddepth=cv2.CV_32F, kernel=kernel)
 
-        normalization[roi[0]:roi[1], roi[2]: roi[3]] += mask
-        mask_list.append(mask)
-        roi_list.append(roi)
+        kernel = gauss_kernel(sigma)
+        I=[cv2.filter2D(warped_image, ddepth=cv2.CV_32F, kernel=kernel)[roi[0]:roi[1], roi[2]: roi[3]]]
+        B=[warped_image[roi[0]:roi[1], roi[2]: roi[3]]-I[0]]
+        W=[cv2.filter2D(mask, ddepth=cv2.CV_32F, kernel=kernel)]
+        normalization[0][roi[0]:roi[1], roi[2]: roi[3]] += W[-1]
+        for l in range(3):
+            result[0][roi[0]:roi[1], roi[2]: roi[3], l] += B[0][:,:, l] * W[0]
+        for j in range(1,k+1):
+            kernel=gauss_kernel(sigma*math.sqrt(2*(j)+1))
+            I.append(cv2.filter2D(I[-1], ddepth=cv2.CV_32F, kernel=kernel))
+            if j==k:
+                B.append(I[-2])
+            else:
+                B.append(I[-2]-I[-1])
+            W.append(cv2.filter2D(W[-1], ddepth=cv2.CV_32F, kernel=kernel))
+            normalization[j][roi[0]:roi[1], roi[2]: roi[3]] += W[-1]
+            for l in range(3):
+                result[j][roi[0]:roi[1], roi[2]: roi[3], l] += B[j][:,:,l] * W[j]
+    end_result = np.zeros_like(result[0])
+    for i in range(k+1):
+        normalization[i][normalization==0]=np.inf
+        for l in range(3):
+            end_result[:,:,l] += result[i][:,:,l] / normalization[i]
 
-
-
-
-    result = np.zeros((h_res, w_res, 3), dtype='float64')
-    for i in tqdm(range(0, len(homographys)), desc="combining images", disable=not verbose):
-        # add the connected images
-        M = np.matmul(offset, homographys[i])
-        warped_image = cv2.warpPerspective(list_of_images[i], M,
-                                           (result.shape[1], result.shape[0]))
-        roi=roi_list[i]
-        mask=mask_list[i]
-        #multiply the single channels
-        for i in range(3):
-            result[roi[0]:roi[1], roi[2]: roi[3],i]+= warped_image[roi[0]:roi[1], roi[2]: roi[3],i]*mask*normalization[roi[0]:roi[1], roi[2]: roi[3]]
-    return np.round(result).astype('uint8')
+    return (end_result).astype('float32')
 
 
 if __name__ == '__main__':
@@ -633,7 +643,7 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    MAX_MATCHES = 3500
+    MAX_MATCHES = 15000
 
     img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos5"  # Enter Directory of all images
     data_path = os.path.join(img_dir, '*g')
