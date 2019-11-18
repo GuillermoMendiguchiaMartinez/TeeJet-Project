@@ -24,11 +24,17 @@
        </sizepolicy>
       </property>
       <property name="currentIndex">
-       <number>0</number>
+       <number>2</number>
       </property>
-      <widget class="QWidget" name="tab1">
+      <property name="tabsClosable">
+       <bool>false</bool>
+      </property>
+      <property name="tabBarAutoHide">
+       <bool>false</bool>
+      </property>
+      <widget class="QWidget" name="maptab">
        <attribute name="title">
-        <string>Tab 1</string>
+        <string>Map</string>
        </attribute>
        <layout class="QHBoxLayout" name="horizontalLayout_2">
         <item>
@@ -130,9 +136,9 @@
         </item>
        </layout>
       </widget>
-      <widget class="QWidget" name="tab2">
+      <widget class="QWidget" name="segtab">
        <attribute name="title">
-        <string>Tab 2</string>
+        <string>Segmentation</string>
        </attribute>
        <layout class="QHBoxLayout" name="horizontalLayout">
         <item>
@@ -292,10 +298,49 @@
         </item>
        </layout>
       </widget>
-      <widget class="QWidget" name="tab3">
+      <widget class="QWidget" name="spraytab">
        <attribute name="title">
-        <string>Tab 3</string>
+        <string>Spray Overview</string>
        </attribute>
+       <layout class="QHBoxLayout" name="horizontalLayout_4">
+        <item>
+         <widget class="SprayView" name="SprayViewer">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>2000</width>
+            <height>2000</height>
+           </size>
+          </property>
+          <property name="text">
+           <string/>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="verticalLayout_2" stretch="0,0">
+          <item>
+           <widget class="QPushButton" name="calculate_spray">
+            <property name="text">
+             <string>Calculate Spray Pattern</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="export_spray">
+            <property name="text">
+             <string>Export Spray Pattern</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
       </widget>
      </widget>
     </item>
@@ -329,6 +374,11 @@
    <class>ZoomView</class>
    <extends>QLabel</extends>
    <header>ZoomView</header>
+  </customwidget>
+  <customwidget>
+   <class>SprayView</class>
+   <extends>QLabel</extends>
+   <header>SprayView.h</header>
   </customwidget>
  </customwidgets>
  <resources/>
