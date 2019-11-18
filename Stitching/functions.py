@@ -18,6 +18,11 @@ import copyreg
 
 
 def patch_cv2_pickiling():
+    """
+    makes cv2 keypoints and dmatches pickable
+    :return:
+    """
+
     # Create the bundling between class and arguments to save for Keypoint class
     # See : https://stackoverflow.com/questions/50337569/pickle-exception-for-cv2-boost-when-using-multiprocessing/50394788#50394788
     def _pickle_keypoint(keypoint):  # : cv2.KeyPoint
@@ -49,6 +54,11 @@ def patch_cv2_pickiling():
 
 
 def mc_matcher(args):
+    """
+    matcher designed to be called by pool.map
+    :param args: input arguments in format (position,target,sift_threshold,use_inliers_only,features,goodmatchs_threshold,ransac_threshold)
+    :return: (position, target, matches, M) where M is the homography
+    """
     position = args[0]
     target = args[1]
     sift_threshold = args[2]
@@ -270,19 +280,20 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
 
     # calculate an estimate for each point_world
     for i in range(len(point_world)):
-        point_idx = list(point_world[i][1])[0]
-        est_homography = homographys_abs[point_idx[0]]
-        start_coord = features[point_idx[0]][0][point_idx[1]].pt
-        est_world_pos = apply_homography_to_point(start_coord, est_homography)
-        point_world[i][0] = est_world_pos
+        est_world_pos = np.zeros((2,))
+        for j in range(len(list(point_world[i][1]))):
+            point_idx = list(point_world[i][1])[j]
+            est_homography = homographys_abs[point_idx[0]]
+            start_coord = features[point_idx[0]][0][point_idx[1]].pt
+            est_world_pos += apply_homography_to_point(start_coord, est_homography)
+        point_world[i][0] = est_world_pos / len(list(point_world[i][1]))
 
     return features, point_world, homographys_abs
 
 
-def prepare_data(features, point_world, homographys_abs, intrinsic, dist_coeffs):
+def prepare_data(features, point_world, homographys_abs, intrinsic, dist_coeffs, outlier_threshold=100, verbose=False):
     n_cameras = len(homographys_abs)
     n_points = len(point_world)
-
     points_world_frame = np.empty(n_points * 2)
     camera_indices = []
     point_indices = []
@@ -303,13 +314,59 @@ def prepare_data(features, point_world, homographys_abs, intrinsic, dist_coeffs)
     for i in range(n_cameras):
         homographys[9 * i:9 * i + 9] = homographys_abs[i].ravel()
 
-    points_camera_frame = np.array(points_camera_frame)
-    n = 9 * n_cameras + 2 * n_points + 13
-    m = 2 * points_camera_frame.shape[0]
-    print("n_cameras: {}".format(n_cameras))
-    print("n_points: {}".format(n_points))
-    print("Total number of parameters: {}".format(n))
-    print("Total number of residuals: {}".format(m))
+    # before outlier removal
+
+    x0 = np.hstack((camera_params.ravel(), homographys.ravel(), points_world_frame.ravel()))
+    f0 = residuals(x0, n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
+    if verbose:
+        n = 9 * n_cameras + 2 * n_points + 13
+        m = 2 * n_observations
+        print("before outlier removal")
+        print("n_cameras: {}".format(n_cameras))
+        print("n_World_points: {}".format(n_points))
+        print("n_observations: {}".format(n_observations))
+        print("Total number of parameters: {}".format(n))
+        print("Total number of residuals: {}".format(m))
+        plt.plot(f0)
+        plt.title('Residuals before outlier removal')
+        plt.show()
+    camera_indices_array = np.empty((len(camera_indices) * 2))
+    camera_indices_array[::2] = camera_indices
+    camera_indices_array[1::2] = camera_indices
+
+    point_indices_array = np.empty((len(point_indices) * 2))
+    point_indices_array[::2] = point_indices
+    point_indices_array[1::2] = point_indices
+
+    camera_residual_median = []
+    for i in range(n_cameras):
+        camera_residual_median.append(np.median(np.abs(f0[camera_indices_array == i])))
+
+    for i in range(n_observations - 1, -1, -1):
+        if abs(f0[2 * i]) > outlier_threshold * camera_residual_median[camera_indices[i]] or abs(
+                f0[2 * i + 1]) > outlier_threshold * camera_residual_median[camera_indices[i]]:
+            camera_indices.pop(i)
+            point_indices.pop(i)
+            points_camera_frame.pop(i)
+
+    n_observations = len(points_camera_frame)
+    # after outlier removal
+    if verbose:
+        n = 9 * n_cameras + 2 * n_points + 13
+        m = 2 * n_observations
+        print("after outlier removal")
+        print("n_cameras: {}".format(n_cameras))
+        print("n_World_points: {}".format(n_points))
+        print("n_observations: {}".format(n_observations))
+        print("Total number of parameters: {}".format(n))
+        print("Total number of residuals: {}".format(m))
+
+        x1 = np.hstack((camera_params.ravel(), homographys.ravel(), points_world_frame.ravel()))
+        f1 = residuals(x1, n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
+        plt.plot(f1)
+        plt.title('Residuals after outlier removal')
+        plt.show()
+
     return camera_params, points_world_frame, homographys, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations
 
 
@@ -319,7 +376,7 @@ def residuals(params, n_cameras, n_points, n_observations, camera_indicies, poin
     homographys = params[14:14 + n_cameras * 9].reshape(n_cameras, 3, 3)
     points_world_frame = params[14 + n_cameras * 9:].reshape(n_points, 2)
 
-    point_distorted = points_camera_frame.astype('float32')
+    point_distorted = np.array(points_camera_frame).astype('float32')
     point_undistorted = cv2.undistortPoints(point_distorted.reshape(-1, int(point_distorted.size / 2), 2), intrinsic,
                                             undistort_coeffs,
                                             R=np.eye(3), P=intrinsic)
@@ -358,13 +415,13 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
     return A
 
 
-def closest_image_map(height_ori, width_ori, coordinates, h_img, w_img, downscaling_factor=4, margin=1,
+def closest_image_map(height_ori, width_ori,coordinates, trans_img_corners, h_img, w_img, downscaling_factor=4, margin=1,
                       verbose=False):
     '''
     generates image in which the closest origin image to pixels is indicated
     :param height_ori: height of the stitched output
     :param width_ori: width of the stitched output
-    :param coordinates: (transformed) centerpoints of the images
+    :param trans_img_corners: (transformed) cornerpoints of the image
     :param h_img: height of one image
     :param w_img: width of image
     :param downscaling_factor:  downscaling factor for the calculation
@@ -377,10 +434,19 @@ def closest_image_map(height_ori, width_ori, coordinates, h_img, w_img, downscal
         start = time.time()
     height = int(round(height_ori / downscaling_factor))
     width = int(round(width_ori / downscaling_factor))
+    new_trans_img_corners = []
+
     new_coordinates = []
     for coordinate in coordinates:
         new_coordinates.append((round(coordinate[1] / downscaling_factor), round(coordinate[0] / downscaling_factor)))
     coordinates = new_coordinates
+
+    for image in trans_img_corners:
+        corner_array=np.zeros((4,2))
+        for i in range(len(image)):
+            corner_array[i,:]=(round(image[i][1] / downscaling_factor), round(image[i][0] / downscaling_factor))
+        new_trans_img_corners.append(corner_array)
+    trans_img_corners = new_trans_img_corners
     h_img = round(h_img / downscaling_factor)
     w_img = round(w_img / downscaling_factor)
 
@@ -391,21 +457,28 @@ def closest_image_map(height_ori, width_ori, coordinates, h_img, w_img, downscal
     shortest_distance = np.full_like(a, math.sqrt(height ** 2 + width ** 2), dtype=np.single)
     node = np.zeros_like(shortest_distance, dtype=np.uint8)
 
-    for i in range(0, len(coordinates)):
-        x_coord = coordinates[i][1]
-        y_coord = coordinates[i][0]
+    for i in range(0, len(trans_img_corners)):
 
-        y_lower = int(max(0, round(y_coord - (h_img * margin))))
-        y_upper = int(round(y_coord + (h_img * margin)))
-        x_lower = int(max(0, round(x_coord - (w_img * margin))))
-        x_upper = int(round(x_coord + (w_img * margin)))
+
+
+        y_lower = int(max(0, round(np.min(trans_img_corners[i][:,0]))))
+        y_upper = int(round(np.max(trans_img_corners[i][:,0]+1)))
+        x_lower = int(max(0, round(np.min(trans_img_corners[i][:,1]))))
+        x_upper = int(round(np.max(trans_img_corners[i][:,1]+1)))
         shortest_distance_roi = shortest_distance[y_lower:y_upper, x_lower:x_upper]
         node_roi = node[y_lower:y_upper, x_lower:x_upper]
         xx_roi = xx[y_lower:y_upper, x_lower:x_upper]
         yy_roi = yy[y_lower:y_upper, x_lower:x_upper]
+
+        trans_img_corners_roi=np.empty_like(trans_img_corners[i])
+        trans_img_corners_roi[:,0]=trans_img_corners[i][:,1]-x_lower
+        trans_img_corners_roi[:, 1] = trans_img_corners[i][:, 0] - y_lower
+        image_matrix=np.zeros_like(shortest_distance_roi)
+        cv2.fillPoly(image_matrix,[trans_img_corners_roi.reshape(-1,1,2).astype('int')],1)
+
         shortest_distance_2_roi = np.sqrt((yy_roi - coordinates[i][0]) ** 2 + (xx_roi - coordinates[i][1]) ** 2)
 
-        shorter_matrix = shortest_distance_roi > shortest_distance_2_roi
+        shorter_matrix = (shortest_distance_roi > shortest_distance_2_roi) * (image_matrix==1)
         shortest_distance_roi[shorter_matrix] = shortest_distance_2_roi[shorter_matrix]
         node_roi[shorter_matrix] = i + 1
 
@@ -478,65 +551,7 @@ def multiple_v3(list_of_images, homographys, margin=1):
     return result
 
 
-def Laplacian_Pyramid_Blending_with_mask(A, B, mask, num_levels=6):
-    # adapted from https://www.morethantechnical.com/2017/09/29/laplacian-pyramid-with-masks-in-opencv-python/
-    # which is based on: http://docs.opencv.org/3.0-beta/doc/py_tutorials/py_imgproc/py_pyramids/py_pyramids.html
-
-    # assume mask is float32 [0,1]
-    h = A.shape[0]
-    w = A.shape[1]
-    if h % 2 ** num_levels != 0:
-        h = h + h % 2 ** num_levels
-    if w % 2 ** num_levels != 0:
-        w = w + w % 2 ** num_levels
-    GA = np.zeros((h, w, 3), dtype='float32')
-    GB = np.zeros((h, w, 3), dtype='float32')
-    GM = np.zeros((h, w, 3), dtype='float32')
-
-    GA[:A.shape[0], :A.shape[1], :] = A.copy() / 255
-    GB[:A.shape[0], :A.shape[1], :] = B.copy() / 255
-    m = mask.copy().astype('float32')
-    GM[:A.shape[0], :A.shape[1], :] = cv2.cvtColor(m, cv2.COLOR_GRAY2BGR)
-
-    gpA = [GA]
-    gpB = [GB]
-    gpM = [GM]
-    for i in range(num_levels):
-        GA = cv2.pyrDown(GA)
-        GB = cv2.pyrDown(GB)
-        GM = cv2.pyrDown(GM)
-        gpA.append(np.float32(GA))
-        gpB.append(np.float32(GB))
-        gpM.append(np.float32(GM))
-
-    # generate Laplacian Pyramids for A,B and masks
-    lpA = [gpA[num_levels - 1]]  # the bottom of the Lap-pyr holds the last (smallest) Gauss level
-    lpB = [gpB[num_levels - 1]]
-    gpMr = [gpM[num_levels - 1]]
-    for i in range(num_levels - 1, 0, -1):
-        # Laplacian: subtract upscaled version of lower level from current level
-        # to get the high frequencies
-        LA = np.subtract(gpA[i - 1], cv2.pyrUp(gpA[i], dstsize=(gpA[i - 1].shape[1], gpA[i - 1].shape[0])))
-        LB = np.subtract(gpB[i - 1], cv2.pyrUp(gpB[i], dstsize=(gpB[i - 1].shape[1], gpB[i - 1].shape[0])))
-        lpA.append(LA)
-        lpB.append(LB)
-        gpMr.append(gpM[i - 1])  # also reverse the masks
-
-    # Now blend images according to mask in each level
-    LS = []
-    for la, lb, gm in zip(lpA, lpB, gpMr):
-        ls = la * gm + lb * (1.0 - gm)
-        ls = np.maximum(ls, 0)
-        LS.append(ls)
-
-    # now reconstruct
-    ls_ = LS[0]
-    for i in range(1, num_levels):
-        ls_ = cv2.pyrUp(ls_, dstsize=(LS[i].shape[1], LS[i].shape[0]))
-        ls_ = cv2.add(ls_, LS[i], dtype=cv2.CV_32F)
-    ls_ = np.minimum(ls_, 1)
-    return (ls_[:A.shape[0], :A.shape[1], :] * 255).astype('uint8')
-
+# laplacian blending(not used)
 
 def gauss_kernel(sigma):
     '''
@@ -561,21 +576,31 @@ def multiple_v4(list_of_images, homographys, margin=1, verbose=False):
 
     # calculate the transformed middle coordinates
     trans_img_centers = []
+    trans_img_corners = []
     for homography in homographys:
+
         # center = apply_homography_to_point((offset_x * 0.5, offset_y * 0.5), np.matmul(offset, homography))
         center = apply_homography_to_point((w * 0.5, h * 0.5), homography)
         trans_img_centers.append(list(center))
 
+        undistort_offset=100
+        corner1 = apply_homography_to_point((undistort_offset, undistort_offset), homography)
+        corner2 = apply_homography_to_point((w-undistort_offset, undistort_offset), homography)
+        corner3 = apply_homography_to_point((w-undistort_offset, h-undistort_offset), homography)
+        corner4 = apply_homography_to_point((undistort_offset, h-undistort_offset), homography)
+        trans_img_corners.append((list(corner1), list(corner2), list(corner3), list(corner4)))
+
         # calculate the estimated max and min of the endresult:
-        y_max = 0.5 * h + margin * h
-        y_min = 0.5 * h - margin * h
-        x_max = 0.5 * w + margin * w
-        x_min = 0.5 * w - margin * w
-        for img in trans_img_centers:
-            y_max = int(round(max(y_max, img[1] + margin * h)))
-            y_min = int(round(min(y_min, img[1] - margin * h)))
-            x_max = int(round(max(x_max, img[0] + margin * w)))
-            x_min = int(round(min(x_min, img[0] - margin * w)))
+        y_max = trans_img_corners[0][0][1]
+        y_min = trans_img_corners[0][0][1]
+        x_max = trans_img_corners[0][0][0]
+        x_min = trans_img_corners[0][0][0]
+        for img in trans_img_corners:
+            for corner in img:
+                y_max = int(round(max(y_max, corner[1])))
+                y_min = int(round(min(y_min, corner[1])))
+                x_max = int(round(max(x_max, corner[0])))
+                x_min = int(round(min(x_min, corner[0])))
 
         w_res = x_max - x_min
         h_res = y_max - y_min
@@ -583,57 +608,72 @@ def multiple_v4(list_of_images, homographys, margin=1, verbose=False):
     offset_y = int(round(abs(y_min)))
     offset_x = int(round(abs(x_min)))
     for i in range(len(trans_img_centers)):
+
         trans_img_centers[i][1] += offset_y
         trans_img_centers[i][0] += offset_x
+        for corner in trans_img_corners[i]:
+            corner[1]+= offset_y
+            corner[0]+= offset_x
+
 
     offset = np.array([[1, 0, offset_x], [0, 1, offset_y], [0, 0, 1]])
 
-    closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, h, w, downscaling_factor=4, verbose=True,
+    closest_img_map = closest_image_map(h_res, w_res,trans_img_centers, trans_img_corners, h, w, downscaling_factor=4, verbose=True,
                                         margin=1.5)
+    # if the resulting image would not fit into memory, we produce a downscaled version
+    downscaling_factor = 1
+    if (h_res * w_res / downscaling_factor ** 2 > 10000 ** 2):
+        downscaling_factor = math.sqrt(h_res * w_res/10000 ** 2)
 
-    sigma =5
+    h_res_ds = int(round(h_res / downscaling_factor))
+    w_res_ds = int(round(w_res / downscaling_factor))
 
-    k=3
-    result = [np.zeros((h_res, w_res, 3), dtype='float32')]*(k+1)
-    normalization=[np.zeros((h_res, w_res), dtype='float32')]*(k+1)
+    closest_img_map = cv2.resize(closest_img_map, (w_res_ds, h_res_ds))
+    sigma = 5
+    k = 3
+    result = [np.zeros((h_res_ds, w_res_ds, 3), dtype='float32')] * (k + 1)
+    normalization = [np.zeros((h_res_ds, w_res_ds), dtype='float32')] * (k + 1)
+
     for i in tqdm(range(0, len(homographys)), desc="combining images", disable=not verbose):
-
 
         # add the connected images
         M = np.matmul(offset, homographys[i])
         warped_image = cv2.warpPerspective(list_of_images[i], M,
-                                           (result[0].shape[1], result[0].shape[0]))
+                                           (w_res, h_res))
+        warped_image = cv2.resize(warped_image, (w_res_ds, h_res_ds))
 
-        #multi_band_blending according to http://matthewalunbrown.com/papers/ijcv2007.pdf
-        x, y, dx, dy = cv2.boundingRect((closest_img_map==i+1).astype('uint8'))
+        # multi_band_blending according to http://matthewalunbrown.com/papers/ijcv2007.pdf
+        x, y, dx, dy = cv2.boundingRect((closest_img_map == i + 1).astype('uint8'))
         roi = (
-        max(0, y - 3 * sigma), min(h_res, y + dy + 3 * sigma), max(0, x - 3 * sigma), min(w_res, x + dx + 3 * sigma))
+            max(0, y - 3 * sigma), min(h_res_ds, y + dy + 3 * sigma), max(0, x - 3 * sigma),
+            min(w_res_ds, x + dx + 3 * sigma))
         mask = np.zeros((roi[1] - roi[0], roi[3] - roi[2]), dtype='float32')
         mask[closest_img_map[roi[0]:roi[1], roi[2]: roi[3]] == i + 1] = 1
 
         kernel = gauss_kernel(sigma)
-        I=[cv2.filter2D(warped_image, ddepth=cv2.CV_32F, kernel=kernel)[roi[0]:roi[1], roi[2]: roi[3]]]
-        B=[warped_image[roi[0]:roi[1], roi[2]: roi[3]]-I[0]]
-        W=[cv2.filter2D(mask, ddepth=cv2.CV_32F, kernel=kernel)]
+        I = [cv2.filter2D(warped_image[roi[0]:roi[1], roi[2]: roi[3]], ddepth=cv2.CV_32F, kernel=kernel)]
+        B = [warped_image[roi[0]:roi[1], roi[2]: roi[3]] - I[0]]
+        W = [cv2.filter2D(mask, ddepth=cv2.CV_32F, kernel=kernel)]
         normalization[0][roi[0]:roi[1], roi[2]: roi[3]] += W[-1]
         for l in range(3):
-            result[0][roi[0]:roi[1], roi[2]: roi[3], l] += B[0][:,:, l] * W[0]
-        for j in range(1,k+1):
-            kernel=gauss_kernel(sigma*math.sqrt(2*(j)+1))
+            result[0][roi[0]:roi[1], roi[2]: roi[3], l] += B[0][:, :, l] * W[0]
+        for j in range(1, k + 1):
+            kernel = gauss_kernel(sigma * math.sqrt(2 * (j) + 1))
             I.append(cv2.filter2D(I[-1], ddepth=cv2.CV_32F, kernel=kernel))
-            if j==k:
+            if j == k:
                 B.append(I[-2])
             else:
-                B.append(I[-2]-I[-1])
+                B.append(I[-2] - I[-1])
             W.append(cv2.filter2D(W[-1], ddepth=cv2.CV_32F, kernel=kernel))
             normalization[j][roi[0]:roi[1], roi[2]: roi[3]] += W[-1]
             for l in range(3):
-                result[j][roi[0]:roi[1], roi[2]: roi[3], l] += B[j][:,:,l] * W[j]
+                result[j][roi[0]:roi[1], roi[2]: roi[3], l] += B[j][:, :, l] * W[j]
     end_result = np.zeros_like(result[0])
-    for i in range(k+1):
-        normalization[i][normalization==0]=np.inf
+    for i in range(k + 1):
+        normalization[i][normalization == 0] = np.inf
         for l in range(3):
-            end_result[:,:,l] += result[i][:,:,l] / normalization[i]
+            end_result[:, :, l] += result[i][:, :, l] / normalization[i]
+    end_result[closest_img_map==0]=0
 
     return (end_result).astype('float32')
 
@@ -643,7 +683,7 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    MAX_MATCHES = 15000
+    MAX_MATCHES = 4000
 
     img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos5"  # Enter Directory of all images
     data_path = os.path.join(img_dir, '*g')
@@ -669,31 +709,27 @@ if __name__ == '__main__':
     for f1 in files:
         img1 = cv2.imread(f1)
         cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
-        data_undistorted.append(cv2.undistort(img1, intrinsic, distCoeffs))
+        # data_undistorted.append(cv2.undistort(img1, intrinsic, distCoeffs))
         data.append(img1)
         gps_coord = gpsphoto.getGPSData(f1)
         gps_coordinates.append((gps_coord['Latitude'], gps_coord['Longitude']))
 
-    center_image = 5
     patch_cv2_pickiling()
     features, point_world, homographys_abs = generate_matrixes(data, gps_coordinates, MAX_MATCHES=MAX_MATCHES,
                                                                sift_threshold=0.7, ransac_threshold=5,
                                                                use_inliers_only=True, goodmatches_threshold=10)
     print('generated matrixes')
 
-    camera_params, points_world_frame, homographys_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
-        features, point_world, homographys_abs, intrinsic, distCoeffs)
-    x0 = np.hstack((camera_params.ravel(), homographys_ba.ravel(), points_world_frame.ravel()))
-    print('made initial guess')
-    f0 = residuals(x0, n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
-    plt.plot(f0)
-    plt.show()
+    for i in range(len(data)):
+        data_undistorted.append( cv2.undistort(data[i], intrinsic, distCoeffs))
 
-    res_image = multiple_v4(data_undistorted, homographys_abs, 1, verbose=True)
+    camera_params, points_world_frame, homographys_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
+        features, point_world, homographys_abs, intrinsic, distCoeffs, verbose=True, outlier_threshold=10)
+    x0 = np.hstack((camera_params.ravel(), homographys_ba.ravel(), points_world_frame.ravel()))
+
+    res_image = multiple_v4(data, homographys_abs, 1, verbose=True)
     plt.imshow(res_image)
     cv2.imwrite('res_image_guess.jpg', res_image)
-
-    print('mean residuals= %f' % (np.mean(np.abs(f0))))
     A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
     res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5, xtol=1e-8, method='trf',
                         args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
@@ -707,7 +743,7 @@ if __name__ == '__main__':
     homographys = res.x[14:14 + n_cameras * 9].reshape(n_cameras, 3, 3)
 
     for i in range(len(data)):
-        data[i] = cv2.undistort(data[i], intrinsic, distCoeffs)
+        data_undistorted[i] = cv2.undistort(data[i], intrinsic, distCoeffs)
 
     res_image = multiple_v4(data, homographys, 1, verbose=True)
     plt.imshow(res_image)
