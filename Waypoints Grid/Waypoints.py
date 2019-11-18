@@ -1,9 +1,10 @@
 import math
 import cv2
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import numpy as np
 import pyproj as proj
 from tqdm import tqdm
+
 
 def global2local2(point, ref_point):
     crs_wgs = proj.Proj(init='epsg:4326')  # assuming you're using WGS84 geographic coordinate system
@@ -100,7 +101,6 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
     # Create the local coordinates vector for the real coordinates gotten from GUI.
     for coordinate in coordinates:
         coordinates_rel.append(np.ceil(np.array(global2local2(coordinate, ref_point))/pixel_size).astype('int'))
-
     # Transform to array (N by 2)
     coord_rel_np = np.array(coordinates_rel)
 
@@ -134,9 +134,9 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
             centers = centers + centers_local           # Store the final coordinate order for waypoint navigation
 
 
-    print("Local coordinates (y,x)")
+    print("Local coordinates (x,y)")
     print(centers)
-    map_color=cv2.cvtColor((map_array*255).astype('uint8'),cv2.COLOR_GRAY2BGR)
+    map_color = cv2.cvtColor((map_array*255).astype('uint8'),cv2.COLOR_GRAY2BGR)
     for center in centers:
         map_color[int(center[1]),int(center[0])] = (255,0,0)
     #plt.imshow(map_color)
@@ -144,15 +144,20 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
     waypts_m=[]
     for center in centers:
         waypts_m.append((center[0]*pixel_size, center[1]*pixel_size))
-    latlon_wpts = []
+    lonlat_wpts = []
     for waypt in tqdm(waypts_m):
-        latlon_wpts.append(local2global(waypt, ref_point))
+        lonlat_wpts.append(local2global(waypt, ref_point))
 
-    print("Global coordinates are (lat, lon):", latlon_wpts)
-    np.array(latlon_wpts)
-    np.save("waypts.npy", latlon_wpts)
+    print("Global coordinates are (lon, lat):", lonlat_wpts)
+    np.array(lonlat_wpts)
+
+    with open('Waypoints.txt', 'w') as f:
+        for point in lonlat_wpts:
+            f.write(str(point)+'\n')
+        #csv.writer(f).writerows(lonlat_wpts)
+
 
 if __name__ == '__main__':
-    corners = [(9.93758976, 57.04503142),(9.93810475,57.04265598),(9.94246066,57.04413262)]
-    waypoints(corners, 90, 25, 0.5, 0.5)
+    corners = [(9.93758976, 57.04403142),(9.93810475,57.04265598),(9.94246066,57.04413262),(9.94058976, 57.04503142)]
+    waypoints(corners, 81.9, 25, 0.5, 0.5)
 
