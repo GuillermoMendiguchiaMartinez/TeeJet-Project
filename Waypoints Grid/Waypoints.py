@@ -48,7 +48,7 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
     :return: waypoints Tuple of lat long [(lat_1,lon_1),...(lat_n,lon_n)] in global form.
     '''
 
-    cam_fov = math.radians(cam_fov_deg / 2)
+    cam_fov = math.radians(cam_fov_deg)
 
     # Initialisation of latitude longitude
     lat_max = coordinates[0][1]
@@ -139,8 +139,8 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
     map_color=cv2.cvtColor((map_array*255).astype('uint8'),cv2.COLOR_GRAY2BGR)
     for center in centers:
         map_color[int(center[1]),int(center[0])] = (255,0,0)
-    #plt.imshow(map_color)
-    #plt.show()
+    plt.imshow(map_color)
+    plt.show()
     waypts_m=[]
     for center in centers:
         waypts_m.append((center[0]*pixel_size, center[1]*pixel_size))

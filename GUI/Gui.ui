@@ -24,7 +24,7 @@
        </sizepolicy>
       </property>
       <property name="currentIndex">
-       <number>2</number>
+       <number>1</number>
       </property>
       <property name="tabsClosable">
        <bool>false</bool>
@@ -294,45 +294,14 @@
             </property>
            </widget>
           </item>
-         </layout>
-        </item>
-       </layout>
-      </widget>
-      <widget class="QWidget" name="spraytab">
-       <attribute name="title">
-        <string>Spray Overview</string>
-       </attribute>
-       <layout class="QHBoxLayout" name="horizontalLayout_4">
-        <item>
-         <widget class="SprayView" name="SprayViewer">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="maximumSize">
-           <size>
-            <width>2000</width>
-            <height>2000</height>
-           </size>
-          </property>
-          <property name="text">
-           <string/>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <layout class="QVBoxLayout" name="verticalLayout_2" stretch="0,0">
-          <item>
-           <widget class="QPushButton" name="calculate_spray">
-            <property name="text">
-             <string>Calculate Spray Pattern</string>
-            </property>
-           </widget>
-          </item>
           <item>
            <widget class="QPushButton" name="export_spray">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
             <property name="text">
              <string>Export Spray Pattern</string>
             </property>
@@ -374,11 +343,6 @@
    <class>ZoomView</class>
    <extends>QLabel</extends>
    <header>ZoomView</header>
-  </customwidget>
-  <customwidget>
-   <class>SprayView</class>
-   <extends>QLabel</extends>
-   <header>SprayView.h</header>
   </customwidget>
  </customwidgets>
  <resources/>

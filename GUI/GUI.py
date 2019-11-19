@@ -5,6 +5,7 @@ import subprocess
 import math
 import matplotlib.pyplot as plt
 from Segmentation.SegmentationGuille import *
+import cv2
 
 from PyQt5 import QtCore, QtWebEngineWidgets, QtWidgets, uic
 
@@ -38,6 +39,8 @@ class Ui(QtWidgets.QMainWindow):
         self.ZoomViewer.onMousePressed.connect(self.process_zoom_mouse_input)
         self.ZoomViewer.onWidgetResized.connect(self.process_zoom_resize)
         self.zoom_slider.valueChanged.connect(self.process_zoom_slider)
+
+        self.export_spray.clicked.connect(self.process_export_spray_pattern)
 
     def process_mouse_input(self):
         x = self.SegmentationViewer.position.x()
@@ -118,10 +121,41 @@ class Ui(QtWidgets.QMainWindow):
         self.zoom_slider_value = self.zoom_slider.value()
         self.ZoomViewer.show_zoomed_image(self.image, self.position_press, self.zoom_slider_value, self.mask)
 
+    def process_export_spray_pattern(self):
+        self.exported_image = self.mask.copy()
+        # To create an upper bound for the used amount of liquid
+        image_dim = [3968/2, 2976/2]
+        height = 40
+        cam_fov_deg = 81.9/2
+        cam_fov = math.radians(cam_fov_deg)
+        dist_real = math.tan(cam_fov) * height
+        spray_pixel = round(image_dim[0]/dist_real)
+        rounded_spray_pixel = math.floor(spray_pixel)
+        if rounded_spray_pixel % 2 == 0:
+            rounded_spray_pixel = math.ceil(spray_pixel)
+        print(spray_pixel)
+        print(rounded_spray_pixel)
+        kernel = np.ones((rounded_spray_pixel, rounded_spray_pixel), np.uint8)
+        self.exported_image = cv2.dilate(self.exported_image, kernel)
+        cv2.imwrite("image.png", self.exported_image)
+        #zero_mask = np.zeros((10, 10)).astype('uint8')
+        print('GUICheckpoint1')
+        #self.exported_mask = segment(self.exported_image, self.segmentation_color, self.threshold_slider.value())
+        #print('Checkpoint2')
+        max_dim_img = max(self.exported_image.shape[0], self.exported_image.shape[1])
+        print('GUICheckpoint2')
+        max_dimension = 2000
+        scaling_factor = max_dimension / max_dim_img
+        print('GUICheckpoint3')
+        self.exported_image = cv2.resize(self.exported_image, (
+            int(round(self.exported_image.shape[1] * scaling_factor)), int(round(self.exported_image.shape[0] * scaling_factor))))
+        print('GUICheckpoint4')
+        self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape, self.exported_image)
 
 class MyThread(threading.Thread):
     def run(self):
         self.process = subprocess.Popen(['voila', 'mapselect.ipynb', '--port=8866', '--no-browser'])
+
 
 
 if __name__ == '__main__':

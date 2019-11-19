@@ -28,9 +28,10 @@ class View(QtWidgets.QLabel):
         self.buttons = e.buttons()
         self.onMousePressed.emit()
 
-    def show_image(self, image_downscaled, mask, image_org_shape):
+    def show_image(self, image_downscaled, mask_red, image_org_shape, mask_blue=False):
         masked_img = image_downscaled.copy()
-        masked_img[mask > 0] = (0, 0, 255)
+        masked_img[mask_blue > 0] = (255, 0, 0)
+        masked_img[mask_red > 0] = (0, 0, 255)
         masked_img = cv2.addWeighted(masked_img, 0.4, image_downscaled, 0.6, 0)
         image_converted = cv2.cvtColor(masked_img, cv2.COLOR_BGR2RGB)
 
@@ -41,5 +42,5 @@ class View(QtWidgets.QLabel):
         image_converted = image_converted.scaled(self.size(), QtCore.Qt.KeepAspectRatio)
 
         self.scaling_factor = image_org_shape[0] / (image_converted.height())
-        # print((image_converted.height(), image_converted.width()))
         self.setPixmap(image_converted)
+
