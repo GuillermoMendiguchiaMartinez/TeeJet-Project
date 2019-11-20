@@ -33,7 +33,8 @@ class Ui(QtWidgets.QMainWindow):
         self.SegmentationViewer.onMouseMoved.connect(self.process_mouse_input)
         self.SegmentationViewer.onMousePressed.connect(self.process_mouse_input)
         self.SegmentationViewer.onWidgetResized.connect(self.process_viewer_resize)
-        self.threshold_slider.valueChanged.connect(self.process_threshold_slider)
+        self.hue_threshold_slider.valueChanged.connect(self.process_threshold_slider)
+        self.s_v_threshold_slider.valueChanged.connect(self.process_threshold_slider)
 
         self.ZoomViewer.onMouseMoved.connect(self.process_zoom_mouse_input)
         self.ZoomViewer.onMousePressed.connect(self.process_zoom_mouse_input)
@@ -54,11 +55,11 @@ class Ui(QtWidgets.QMainWindow):
                 self.position_press = (self.SegmentationViewer.position.x(), self.SegmentationViewer.position.y())
                 self.segmentation_color = self.image[int(math.floor(y)), int(math.floor(x))]
                 self.chosen_color_label.setText('chosen color: ' + (str(self.segmentation_color)))
-                self.mask = segment(self.image, self.segmentation_color, self.threshold_slider.value())
+                self.mask = segment(self.image, self.segmentation_color, (self.hue_threshold_slider.value(),self.s_v_threshold_slider.value(),self.s_v_threshold_slider.value()))
                 self.mask_downscaled = segment(self.image_downscaled, self.segmentation_color,
-                                               self.threshold_slider.value())
+                                               (self.hue_threshold_slider.value(),self.s_v_threshold_slider.value(),self.s_v_threshold_slider.value()))
                 self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape)
-                self.threshold_slider.setEnabled(True)
+                self.hue_threshold_slider.setEnabled(True)
                 self.zoom_position = self.ZoomViewer.show_zoomed_image(self.image, self.position_press,
                                                                        self.zoom_slider_value, self.mask)
 
@@ -75,17 +76,17 @@ class Ui(QtWidgets.QMainWindow):
                 self.segmentation_color = self.image[
                     int(math.floor(y_zoom_proportional)), int(math.floor(x_zoom_proportional))]
                 self.chosen_color_label.setText('chosen color: ' + (str(self.segmentation_color)))
-                self.mask = segment(self.image, self.segmentation_color, self.threshold_slider.value())
+                self.mask = segment(self.image, self.segmentation_color,  (self.hue_threshold_slider.value(),self.s_v_threshold_slider.value(),self.s_v_threshold_slider.value()))
                 self.mask_downscaled = segment(self.image_downscaled, self.segmentation_color,
-                                    self.threshold_slider.value())
-                self.threshold_slider.setEnabled(True)
+                                    (self.hue_threshold_slider.value(),self.s_v_threshold_slider.value(),self.s_v_threshold_slider.value()))
+                self.hue_threshold_slider.setEnabled(True)
                 self.zoom_position = self.ZoomViewer.show_zoomed_image(self.image, self.position_press,
                                                                        self.zoom_slider_value, self.mask)
                 self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape)
 
     def process_threshold_slider(self):
-        self.mask_downscaled = segment(self.image_downscaled, self.segmentation_color, self.threshold_slider.value())
-        self.mask = segment(self.image, self.segmentation_color, self.threshold_slider.value())
+        self.mask_downscaled = segment(self.image_downscaled, self.segmentation_color, (self.hue_threshold_slider.value(),self.s_v_threshold_slider.value(),self.s_v_threshold_slider.value()))
+        self.mask = segment(self.image, self.segmentation_color,(self.hue_threshold_slider.value(),self.s_v_threshold_slider.value(),self.s_v_threshold_slider.value()))
         self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape)
         self.zoom_position = self.ZoomViewer.show_zoomed_image(self.image, self.position_press,
                                                                self.zoom_slider_value, self.mask)
@@ -140,7 +141,7 @@ class Ui(QtWidgets.QMainWindow):
         cv2.imwrite("image.png", self.exported_image)
         #zero_mask = np.zeros((10, 10)).astype('uint8')
         print('GUICheckpoint1')
-        #self.exported_mask = segment(self.exported_image, self.segmentation_color, self.threshold_slider.value())
+        #self.exported_mask = segment(self.exported_image, self.segmentation_color, self.hue_threshold_slider.value())
         #print('Checkpoint2')
         max_dim_img = max(self.exported_image.shape[0], self.exported_image.shape[1])
         print('GUICheckpoint2')

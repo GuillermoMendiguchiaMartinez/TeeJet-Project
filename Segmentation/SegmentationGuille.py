@@ -19,8 +19,8 @@ def mouseRGB(event, x, y, flags, param):
 
 def segment(img,color,thresholdwidth,perform_opening=False,perform_closing=False):
     colorHSV=cv2.cvtColor(np.array(color).astype('uint8').reshape(-1,1,3), cv2.COLOR_BGR2HSV)
-    lowerBound = np.array([max(colorHSV[0][0][0]-thresholdwidth,0), 25, 25])
-    upperBound = np.array([min(colorHSV[0][0][0]+thresholdwidth,255), 255, 255])
+    lowerBound = np.array([max(colorHSV[0][0][0]-thresholdwidth[0],0), max(colorHSV[0][0][1]-thresholdwidth[1],0), max(colorHSV[0][0][2]-thresholdwidth[2],0)])
+    upperBound = np.array([min(colorHSV[0][0][0]+thresholdwidth[0],255), min(colorHSV[0][0][1]+thresholdwidth[1],255), min(colorHSV[0][0][2]+thresholdwidth[2],255)])
     imgHSV = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(imgHSV, lowerBound, upperBound)
     if perform_opening:
