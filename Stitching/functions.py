@@ -13,6 +13,7 @@ import geopy.distance
 from GPSPhoto import gpsphoto
 import multiprocessing as mp
 from scipy.sparse.csgraph import dijkstra
+import pyexiv2
 
 import copyreg
 
@@ -66,8 +67,8 @@ def mc_matcher(args):
     features = args[4]
     goodmatches_threshold = args[5]
     ransac_threshold = args[6]
-
-    FLANN_INDEX_KDTREE = 0
+    #setting up the matcher
+    FLANN_INDEX_KDTREE = 1
     index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
     search_params = dict(checks=50)  # or pass empty dictionary
     flann = cv2.FlannBasedMatcher(index_params, search_params)
@@ -99,8 +100,11 @@ def mc_matcher(args):
         matches = goodmatches[mask == 1]
     else:
         matches = goodmatches
-    print("matching %d and %d got %d matches" % (position, target, len(goodmatches)))
+
+    print("process %d: kept %d matches" % (os.getpid(), len(matches)))
     patch_cv2_pickiling()
+    if len(matches)<4:
+        return False
     return (position, target, matches, M)
 
 
@@ -160,11 +164,12 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
     point_world_idx = {}
     point_world = []
     Graph = lil_matrix((len(list_of_images), len(list_of_images)))
+    tried_connections=set()
     for i in tqdm(range(len(list_of_images)), desc="matching", disable=not verbose):
         results = []
-        idx_visited_edges = []
         # calculate distance to the other images
         rel_distance = []
+        nr_connections=0
         for j in range(len(list_of_images)):
             rel_distance.append(geopy.distance.distance(gps_coordinates[i], gps_coordinates[j]).meters)
         closest_images_indices = np.argsort(rel_distance)
@@ -174,7 +179,11 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
         closest_images_indices_unvisited = []
         for idx in closest_images_indices:
             if Graph[idx, i] == 0:
-                closest_images_indices_unvisited.append(idx)
+                if not (idx,i) in tried_connections:
+                    closest_images_indices_unvisited.append(idx)
+
+            else:
+                nr_connections+=1
         print(len(closest_images_indices_unvisited))
 
         for j in range(math.ceil((len(closest_images_indices_unvisited)) / nprocs)):
@@ -184,8 +193,17 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
             for idx in slice:
                 args.append(
                     (i, idx, sift_threshold, use_inliers_only, features, goodmatches_threshold, ransac_threshold))
+                tried_connections.add((i,idx))
             results = results + pool.map(mc_matcher, args)
-            if len(results) >= 6 and results[-1] == False:
+
+            nr_good_results=len(results)-results.count(False)
+            if nr_connections + nr_good_results > 8:
+                break
+            if len(results)>=12 and nr_connections+nr_good_results>4:
+                break
+            if len(results) >= 20 and nr_connections + nr_good_results > 1:
+                break
+            if len(results)>40 and nr_connections+nr_good_results>0:
                 break
 
         for result in results:
@@ -196,8 +214,13 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
                 Graph[i, target] = 1 / len(matches)
                 homography_rel = result[3]
 
-                homographys_rel[(target, position)] = homography_rel
-                homographys_rel[(position, target)] = np.linalg.inv(homography_rel)
+                try:
+                    homographys_rel[(target, position)] = homography_rel
+                    homographys_rel[(position, target)] = np.linalg.inv(homography_rel)
+                except:
+                    print('matrix not invertable:')
+                    print(homography_rel)
+                    continue
 
                 for match in matches:
                     query = (position, match.queryIdx)
@@ -288,7 +311,7 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
             est_world_pos += apply_homography_to_point(start_coord, est_homography)
         point_world[i][0] = est_world_pos / len(list(point_world[i][1]))
 
-    return features, point_world, homographys_abs
+    return features, point_world, homographys_abs,center_image
 
 
 def prepare_data(features, point_world, homographys_abs, intrinsic, dist_coeffs, outlier_threshold=100, verbose=False):
@@ -334,17 +357,21 @@ def prepare_data(features, point_world, homographys_abs, intrinsic, dist_coeffs,
     camera_indices_array[::2] = camera_indices
     camera_indices_array[1::2] = camera_indices
 
-    point_indices_array = np.empty((len(point_indices) * 2))
-    point_indices_array[::2] = point_indices
-    point_indices_array[1::2] = point_indices
-
-    camera_residual_median = []
+    #todo: remove obsolete code
+    """
+    camera_residual_mean = []
+    camera_residual_sigma = []
     for i in range(n_cameras):
-        camera_residual_median.append(np.median(np.abs(f0[camera_indices_array == i])))
+        dataset = f0[camera_indices_array == i]
+        camera_residual_mean.append(np.median(dataset))
+        camera_residual_sigma.append(np.std(dataset))
 
     for i in range(n_observations - 1, -1, -1):
-        if abs(f0[2 * i]) > outlier_threshold * camera_residual_median[camera_indices[i]] or abs(
-                f0[2 * i + 1]) > outlier_threshold * camera_residual_median[camera_indices[i]]:
+        camera_idx = camera_indices[i]
+        upper=camera_residual_mean[camera_idx] + 3 * camera_residual_sigma[camera_idx]
+        lower=camera_residual_mean[camera_idx] - 3 * camera_residual_sigma[camera_idx]
+
+        if upper < f0[2 * i] or lower>f0[2 * i] or upper < f0[2 * i+1] or lower>f0[2 * i+1]:
             camera_indices.pop(i)
             point_indices.pop(i)
             points_camera_frame.pop(i)
@@ -365,7 +392,7 @@ def prepare_data(features, point_world, homographys_abs, intrinsic, dist_coeffs,
         f1 = residuals(x1, n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
         plt.plot(f1)
         plt.title('Residuals after outlier removal')
-        plt.show()
+        plt.show()"""
 
     return camera_params, points_world_frame, homographys, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations
 
@@ -387,8 +414,7 @@ def residuals(params, n_cameras, n_points, n_observations, camera_indicies, poin
     return residuals
 
 
-def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices):
-    center_image = 0
+def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices,center_image):
     camera_indices = np.array(camera_indices)
     point_indices = np.array(point_indices)
     m = camera_indices.size * 2
@@ -411,11 +437,15 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
     fig = plt.figure()
     plt.spy(A)
     plt.show()
-    fig.savefig('sparse.png', dpi=500)
+    try:
+        cv2.imwrite('sparse.png',A.toarray()*255)
+    except:
+        print('problem while writing sparse matrix')
     return A
 
 
-def closest_image_map(height_ori, width_ori,coordinates, trans_img_corners, h_img, w_img, downscaling_factor=4, margin=1,
+def closest_image_map(height_ori, width_ori, coordinates, trans_img_corners, h_img, w_img, downscaling_factor=4,
+                      margin=1,
                       verbose=False):
     '''
     generates image in which the closest origin image to pixels is indicated
@@ -442,9 +472,9 @@ def closest_image_map(height_ori, width_ori,coordinates, trans_img_corners, h_im
     coordinates = new_coordinates
 
     for image in trans_img_corners:
-        corner_array=np.zeros((4,2))
+        corner_array = np.zeros((4, 2))
         for i in range(len(image)):
-            corner_array[i,:]=(round(image[i][1] / downscaling_factor), round(image[i][0] / downscaling_factor))
+            corner_array[i, :] = (round(image[i][1] / downscaling_factor), round(image[i][0] / downscaling_factor))
         new_trans_img_corners.append(corner_array)
     trans_img_corners = new_trans_img_corners
     h_img = round(h_img / downscaling_factor)
@@ -458,27 +488,24 @@ def closest_image_map(height_ori, width_ori,coordinates, trans_img_corners, h_im
     node = np.zeros_like(shortest_distance, dtype=np.uint8)
 
     for i in range(0, len(trans_img_corners)):
-
-
-
-        y_lower = int(max(0, round(np.min(trans_img_corners[i][:,0]))))
-        y_upper = int(round(np.max(trans_img_corners[i][:,0]+1)))
-        x_lower = int(max(0, round(np.min(trans_img_corners[i][:,1]))))
-        x_upper = int(round(np.max(trans_img_corners[i][:,1]+1)))
+        y_lower = int(max(0, round(np.min(trans_img_corners[i][:, 0]))))
+        y_upper = int(round(np.max(trans_img_corners[i][:, 0] + 1)))
+        x_lower = int(max(0, round(np.min(trans_img_corners[i][:, 1]))))
+        x_upper = int(round(np.max(trans_img_corners[i][:, 1] + 1)))
         shortest_distance_roi = shortest_distance[y_lower:y_upper, x_lower:x_upper]
         node_roi = node[y_lower:y_upper, x_lower:x_upper]
         xx_roi = xx[y_lower:y_upper, x_lower:x_upper]
         yy_roi = yy[y_lower:y_upper, x_lower:x_upper]
 
-        trans_img_corners_roi=np.empty_like(trans_img_corners[i])
-        trans_img_corners_roi[:,0]=trans_img_corners[i][:,1]-x_lower
+        trans_img_corners_roi = np.empty_like(trans_img_corners[i])
+        trans_img_corners_roi[:, 0] = trans_img_corners[i][:, 1] - x_lower
         trans_img_corners_roi[:, 1] = trans_img_corners[i][:, 0] - y_lower
-        image_matrix=np.zeros_like(shortest_distance_roi)
-        cv2.fillPoly(image_matrix,[trans_img_corners_roi.reshape(-1,1,2).astype('int')],1)
+        image_matrix = np.zeros_like(shortest_distance_roi)
+        cv2.fillPoly(image_matrix, [trans_img_corners_roi.reshape(-1, 1, 2).astype('int')], 1)
 
         shortest_distance_2_roi = np.sqrt((yy_roi - coordinates[i][0]) ** 2 + (xx_roi - coordinates[i][1]) ** 2)
 
-        shorter_matrix = (shortest_distance_roi > shortest_distance_2_roi) * (image_matrix==1)
+        shorter_matrix = (shortest_distance_roi > shortest_distance_2_roi) * (image_matrix == 1)
         shortest_distance_roi[shorter_matrix] = shortest_distance_2_roi[shorter_matrix]
         node_roi[shorter_matrix] = i + 1
 
@@ -583,11 +610,12 @@ def multiple_v4(list_of_images, homographys, margin=1, verbose=False):
         center = apply_homography_to_point((w * 0.5, h * 0.5), homography)
         trans_img_centers.append(list(center))
 
-        undistort_offset=100
+        #delete image edges to avoid artifacts created by the undistortion (black at the edges)
+        undistort_offset = 100
         corner1 = apply_homography_to_point((undistort_offset, undistort_offset), homography)
-        corner2 = apply_homography_to_point((w-undistort_offset, undistort_offset), homography)
-        corner3 = apply_homography_to_point((w-undistort_offset, h-undistort_offset), homography)
-        corner4 = apply_homography_to_point((undistort_offset, h-undistort_offset), homography)
+        corner2 = apply_homography_to_point((w - undistort_offset, undistort_offset), homography)
+        corner3 = apply_homography_to_point((w - undistort_offset, h - undistort_offset), homography)
+        corner4 = apply_homography_to_point((undistort_offset, h - undistort_offset), homography)
         trans_img_corners.append((list(corner1), list(corner2), list(corner3), list(corner4)))
 
         # calculate the estimated max and min of the endresult:
@@ -612,18 +640,18 @@ def multiple_v4(list_of_images, homographys, margin=1, verbose=False):
         trans_img_centers[i][1] += offset_y
         trans_img_centers[i][0] += offset_x
         for corner in trans_img_corners[i]:
-            corner[1]+= offset_y
-            corner[0]+= offset_x
-
+            corner[1] += offset_y
+            corner[0] += offset_x
 
     offset = np.array([[1, 0, offset_x], [0, 1, offset_y], [0, 0, 1]])
 
-    closest_img_map = closest_image_map(h_res, w_res,trans_img_centers, trans_img_corners, h, w, downscaling_factor=4, verbose=True,
+    closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, trans_img_corners, h, w, downscaling_factor=4,
+                                        verbose=True,
                                         margin=1.5)
     # if the resulting image would not fit into memory, we produce a downscaled version
     downscaling_factor = 1
     if (h_res * w_res / downscaling_factor ** 2 > 10000 ** 2):
-        downscaling_factor = math.sqrt(h_res * w_res/10000 ** 2)
+        downscaling_factor = math.sqrt(h_res * w_res / 10000 ** 2)
 
     h_res_ds = int(round(h_res / downscaling_factor))
     w_res_ds = int(round(w_res / downscaling_factor))
@@ -673,9 +701,26 @@ def multiple_v4(list_of_images, homographys, margin=1, verbose=False):
         normalization[i][normalization == 0] = np.inf
         for l in range(3):
             end_result[:, :, l] += result[i][:, :, l] / normalization[i]
-    end_result[closest_img_map==0]=0
+    end_result[closest_img_map == 0] = 0
 
     return (end_result).astype('float32')
+
+def homography_from_rotation(yaw,pitch,roll, camera_matrix):
+    R_pitch = np.array([[1, 0, 0], [0, math.cos(pitch), -math.sin(pitch)], [0, math.sin(pitch), math.cos(pitch)]])
+    R_roll = np.array([[math.cos(roll), 0, math.sin(roll)], [0, 1, 0], [-math.sin(roll), 0, math.cos(roll)]])
+    R_yaw = np.array([[math.cos(yaw), -math.sin(yaw), 0], [math.sin(yaw), math.cos(yaw), 0], [0, 0, 1]])
+    R=np.matmul(np.matmul(R_roll,R_pitch),R_yaw)
+    RK = np.matmul(R, np.linalg.inv(camera_matrix))
+    M = np.matmul(camera_matrix, RK)
+    return M
+
+def correct_pose_Homography(yaw_gimbal,pitch_gimbal,roll_gimbal,camera_matrix):
+    yaw_gimbal = math.radians(yaw_gimbal)
+    pitch_gimbal= math.radians((-90-pitch_gimbal))
+    roll_gimbal=math.radians(roll_gimbal)
+    M_gimbal=homography_from_rotation(yaw_gimbal,pitch_gimbal,roll_gimbal,camera_matrix)
+    return M_gimbal
+
 
 
 if __name__ == '__main__':
@@ -683,9 +728,9 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    MAX_MATCHES = 4000
+    MAX_MATCHES = 1500
 
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos5"  # Enter Directory of all images
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos11"  # Enter Directory of all images
     data_path = os.path.join(img_dir, '*g')
     files = glob.glob(data_path)
     data = []
@@ -697,14 +742,21 @@ if __name__ == '__main__':
     # spark parameters from pix4d
     # intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
     # distCoeffs = np.array([0.117, -0.298, 0.001, 0,0.142])
+
     # spark parameters from pix4d 2
     intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
     distCoeffs = np.array([0.117, -0.298, 0.001, 0, 0.1420])
+
+    #spark parameters from matlab
+    #intrinsic=np.array([[2.83487803e+03, 0.00000000e+00, 2.01766421e+03],[0.00000000e+00, 2.82153143e+03, 1.41937183e+03],[0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
+    #distCoeffs = np.array([0.29440599, -1.07848387, -0.00455276, 0.00758773, 1.31108063])
+
     # spark estimated parameters
     # intrinsic = np.array([[3968 * 0.638904348949862, 0, 2048], [0, 2976 * 0.638904348949862, 1536], [0, 0, 1]])
     # distCoeffs = np.array([0.06756436352714615, -0.09146430991012529, 0, 0])
     data = []
     gps_coordinates = []
+    xmp_metadata=[]
     data_undistorted = []
     for f1 in files:
         img1 = cv2.imread(f1)
@@ -712,25 +764,27 @@ if __name__ == '__main__':
         # data_undistorted.append(cv2.undistort(img1, intrinsic, distCoeffs))
         data.append(img1)
         gps_coord = gpsphoto.getGPSData(f1)
+        metadata = pyexiv2.Image(f1)
+        xmp_metadata.append(metadata.read_xmp())
         gps_coordinates.append((gps_coord['Latitude'], gps_coord['Longitude']))
 
     patch_cv2_pickiling()
-    features, point_world, homographys_abs = generate_matrixes(data, gps_coordinates, MAX_MATCHES=MAX_MATCHES,
-                                                               sift_threshold=0.7, ransac_threshold=5,
-                                                               use_inliers_only=True, goodmatches_threshold=10)
+    #choosing ransac threshold very high to get inliers that don't show up because of distortion (points near the edges)
+    features, point_world, homographys_abs, center_image = generate_matrixes(data, gps_coordinates, MAX_MATCHES=MAX_MATCHES,
+                                                               sift_threshold=0.6, ransac_threshold=10,
+                                                               use_inliers_only=True, goodmatches_threshold=10,purge_multiples=False)
     print('generated matrixes')
 
     for i in range(len(data)):
-        data_undistorted.append( cv2.undistort(data[i], intrinsic, distCoeffs))
+        data_undistorted.append(cv2.undistort(data[i], intrinsic, distCoeffs))
 
     camera_params, points_world_frame, homographys_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
         features, point_world, homographys_abs, intrinsic, distCoeffs, verbose=True, outlier_threshold=10)
     x0 = np.hstack((camera_params.ravel(), homographys_ba.ravel(), points_world_frame.ravel()))
 
-    res_image = multiple_v4(data, homographys_abs, 1, verbose=True)
-    plt.imshow(res_image)
-    cv2.imwrite('res_image_guess.jpg', res_image)
-    A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
+    #res_image = multiple_v4(data, homographys_abs, 1, verbose=True)
+    #cv2.imwrite('res_image_guess.jpg', res_image)
+    A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices,center_image)
     res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5, xtol=1e-8, method='trf',
                         args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
     print('performed bundle adjustement')
@@ -745,11 +799,33 @@ if __name__ == '__main__':
     for i in range(len(data)):
         data_undistorted[i] = cv2.undistort(data[i], intrinsic, distCoeffs)
 
-    res_image = multiple_v4(data, homographys, 1, verbose=True)
-    plt.imshow(res_image)
+    res_image = multiple_v4(data_undistorted, homographys, 1, verbose=True)
     cv2.imwrite('res_image.jpg', res_image)
-    plt.show()
     print('intrinsic matrix is:')
     print(intrinsic)
     print('distortion coeffs are:')
     print(distCoeffs)
+
+
+    #correct for angles
+    roll_gimbal=float(xmp_metadata[center_image]['Xmp.drone-dji.GimbalRollDegree'])
+    pitch_gimbal=float(xmp_metadata[center_image]['Xmp.drone-dji.GimbalPitchDegree'])
+    yaw_gimbal=float(xmp_metadata[center_image]['Xmp.drone-dji.GimbalYawDegree'])
+
+    pose_correction_matrix=correct_pose_Homography(yaw_gimbal,pitch_gimbal,roll_gimbal,intrinsic)
+    homograpies_abs_pose_corr=[]
+    for M in homographys_abs:
+        homograpies_abs_pose_corr.append(np.matmul(pose_correction_matrix,M))
+    try:
+        res_image = multiple_v4(data_undistorted, homograpies_abs_pose_corr, 1, verbose=True)
+        cv2.imwrite('res_image_pose_left.jpg', res_image)
+    except:
+        print('something went wrong')
+
+
+
+
+
+
+
+
