@@ -728,9 +728,9 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    MAX_MATCHES = 1500
+    MAX_MATCHES = 10000
 
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos11"  # Enter Directory of all images
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos10"  # Enter Directory of all images
     data_path = os.path.join(img_dir, '*g')
     files = glob.glob(data_path)
     data = []
@@ -784,6 +784,7 @@ if __name__ == '__main__':
 
     #res_image = multiple_v4(data, homographys_abs, 1, verbose=True)
     #cv2.imwrite('res_image_guess.jpg', res_image)
+
     A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices,center_image)
     res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5, xtol=1e-8, method='trf',
                         args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
@@ -799,8 +800,8 @@ if __name__ == '__main__':
     for i in range(len(data)):
         data_undistorted[i] = cv2.undistort(data[i], intrinsic, distCoeffs)
 
-    res_image = multiple_v4(data_undistorted, homographys, 1, verbose=True)
-    cv2.imwrite('res_image.jpg', res_image)
+    #res_image = multiple_v4(data_undistorted, homographys, 1, verbose=True)
+    #cv2.imwrite('res_image.jpg', res_image)
     print('intrinsic matrix is:')
     print(intrinsic)
     print('distortion coeffs are:')
@@ -814,7 +815,7 @@ if __name__ == '__main__':
 
     pose_correction_matrix=correct_pose_Homography(yaw_gimbal,pitch_gimbal,roll_gimbal,intrinsic)
     homograpies_abs_pose_corr=[]
-    for M in homographys_abs:
+    for M in homographys:
         homograpies_abs_pose_corr.append(np.matmul(pose_correction_matrix,M))
     try:
         res_image = multiple_v4(data_undistorted, homograpies_abs_pose_corr, 1, verbose=True)
