@@ -71,7 +71,7 @@ def mc_matcher(args):
     # setting up the matcher
     FLANN_INDEX_KDTREE = 1
     index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    search_params = dict(checks=50)  # or pass empty dictionary
+    search_params = dict(checks=75)  # or pass empty dictionary
     flann = cv2.FlannBasedMatcher(index_params, search_params)
 
     # extracting the keypoints
@@ -145,7 +145,7 @@ def perform_djikstra(Graph, start_index):
 
 def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inliers_only=True,
                       ransac_threshold=5, sift_threshold=0.7, verbose=True, goodmatches_threshold=4,
-                      purge_multiples=True,multi_core=False):
+                      purge_multiples=True,multi_core=False,const_weight_edge=0.1):
     # setting up multiprocessing
     nprocs = mp.cpu_count()
     pool = mp.Pool(processes=nprocs)
@@ -216,7 +216,8 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
                 position = result[0]
                 target = result[1]
                 matches = result[2]
-                Graph[i, target] = 1 / len(matches)
+
+                Graph[i, target] = const_weight_edge+ 1/ len(matches)
                 edges.append((i, target, len(matches)))
                 homography_rel = result[3]
 
@@ -350,14 +351,13 @@ def prepare_data(features, point_world, homographies_abs, intrinsic, dist_coeffs
     if verbose:
         n = 9 * n_cameras + 2 * n_points + 13
         m = 2 * n_observations
-        print("before outlier removal")
         print("n_cameras: {}".format(n_cameras))
         print("n_World_points: {}".format(n_points))
         print("n_observations: {}".format(n_observations))
         print("Total number of parameters: {}".format(n))
         print("Total number of residuals: {}".format(m))
         plt.plot(f0)
-        plt.title('Residuals before outlier removal')
+        plt.title('Residuals before bundle adjustement')
         plt.show()
     camera_indices_array = np.empty((len(camera_indices) * 2))
     camera_indices_array[::2] = camera_indices
@@ -384,6 +384,15 @@ def residuals(params, n_cameras, n_points, n_observations, camera_indicies, poin
 
 
 def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices, center_image):
+    """
+    adapted from https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
+    :param n_cameras:
+    :param n_points:
+    :param camera_indices:
+    :param point_indices:
+    :param center_image:
+    :return:
+    """
     camera_indices = np.array(camera_indices)
     point_indices = np.array(point_indices)
     m = camera_indices.size * 2
@@ -413,18 +422,15 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
     return A
 
 
-def closest_image_map(height_ori, width_ori, transformed_centers, trans_img_corners, h_img, w_img, downscaling_factor=4,
-                      margin=1,
+def closest_image_map(height_ori, width_ori, transformed_centers, trans_img_corners, downscaling_factor=4,
                       verbose=False):
     '''
     generates image in which the closest origin image to pixels is indicated
     :param height_ori: height of the stitched output
     :param width_ori: width of the stitched output
-    :param trans_img_corners: (transformed) cornerpoints of the image
-    :param h_img: height of one image
-    :param w_img: width of image
+    :param transformed_centers: (transformed) centerpoints of the images
+    :param trans_img_corners: (transformed) cornerpoints of the images
     :param downscaling_factor:  downscaling factor for the calculation
-    :param margin: margin around pictures that is still calculated, expressed in image_size
     :param verbose: if true some information will be given in the console
     :return: Image in which the pixel value indicates the closest image. If a pixel is 1 it indicates that the first image in coordinates is the closest
     '''
@@ -514,7 +520,7 @@ def gauss_kernel(sigma):
 
 
 def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predecessors=False,
-                perform_blending=True,center_image=0):
+                perform_blending=True,center_image=0,sigma=5,k=3):
     w = list_of_images[0].shape[1]
     h = list_of_images[0].shape[0]
 
@@ -562,9 +568,8 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
 
     offset = np.array([[1, 0, offset_x], [0, 1, offset_y], [0, 0, 1]])
 
-    closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, trans_img_corners, h, w, downscaling_factor=4,
-                                        verbose=True,
-                                        margin=1.5)
+    closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, trans_img_corners, downscaling_factor=4,
+                                        verbose=True)
     # if the resulting image would not fit into memory, we produce a downscaled version
     downscaling_factor = 1
     if (h_res * w_res / downscaling_factor ** 2 > 10000 ** 2):
@@ -576,8 +581,7 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
     # perform image blending
     if perform_blending:
 
-        sigma = 5
-        k = 3
+
         result = [np.zeros((h_res_ds, w_res_ds, 3), dtype='float32')] * (k + 1)
         normalization = [np.zeros((h_res_ds, w_res_ds), dtype='float32')] * (k + 1)
 
@@ -591,10 +595,10 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
 
             # multi_band_blending according to http://matthewalunbrown.com/papers/ijcv2007.pdf
             x, y, dx, dy = cv2.boundingRect((closest_img_map == i + 1).astype('uint8'))
-            # todo: is 3 sigma enough? of a border around the ROI?
+            roi_offset=int(math.floor(3*sigma * math.sqrt(2 * k + 1)))
             roi = (
-                max(0, y - 3 * sigma), min(h_res_ds, y + dy + 3 * sigma), max(0, x - 3 * sigma),
-                min(w_res_ds, x + dx + 3 * sigma))
+                max(0, y - roi_offset), min(h_res_ds, y + dy + roi_offset), max(0, x - roi_offset),
+                min(w_res_ds, x + dx + roi_offset))
             mask = np.zeros((roi[1] - roi[0], roi[3] - roi[2]), dtype='float32')
             mask[closest_img_map[roi[0]:roi[1], roi[2]: roi[3]] == i + 1] = 1
 
@@ -637,18 +641,18 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
         for i in range(len(trans_img_centers)):
             trans_img_centers[i] = tuple(int(round(n / downscaling_factor)) for n in trans_img_centers[i])
             # show outlines of picture
-            ret, thresh = cv2.threshold(closest_img_map, i, i + 1, 0)
-            im2, contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(graph_visualization, contours, 0, (255, 255, 255), 10)
+            thresh=closest_img_map==i+1
+            im2, contours, hierarchy = cv2.findContours(thresh.astype('uint8'), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(graph_visualization, contours, -1, (255, 255, 255), 10)
 
-        line_thickness_per_match = 200 / np.max(np.array(edges)[:, 2])
+        line_thickness_per_match = 190 / np.max(np.array(edges)[:, 2])
 
         # display other edges in blue
         for edge in edges:
             position = edge[0]
             target = edge[1]
             nr_matches = edge[2]
-            line_thickness = int(math.ceil(line_thickness_per_match * nr_matches))
+            line_thickness = 10+int(math.ceil(line_thickness_per_match * nr_matches))
             if not (predecessors[position] == target or predecessors[target] == position):
                 color = (255, 0, 0)
                 cv2.line(graph_visualization, trans_img_centers[position], trans_img_centers[target], color,
@@ -659,7 +663,7 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
             position = edge[0]
             target = edge[1]
             nr_matches = edge[2]
-            line_thickness = int(round(line_thickness_per_match * nr_matches))
+            line_thickness = 10+int(math.ceil(line_thickness_per_match * nr_matches))
             if predecessors[position] == target or predecessors[target] == position:
                 color = (0, 255, 0)
                 cv2.line(graph_visualization, trans_img_centers[position], trans_img_centers[target], color,
@@ -761,16 +765,18 @@ def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True):
         features, point_world, homographies_abs, intrinsic, distCoeffs, verbose=True, outlier_threshold=10)
     x0 = np.hstack((camera_params.ravel(), homographies_ba.ravel(), points_world_frame.ravel()))
 
-    res_image = multiple_v4(data, homographies_abs, verbose=True,
-                            perform_blending=False)
+    res_image,graph_visu = multiple_v4(data, homographies_abs, verbose=True,edges=edges, predecessors=predecessors,
+                            perform_blending=False,center_image=center_image)
     cv2.imwrite(results_dir+'/res_image_guess.jpg', res_image)
+    cv2.imwrite(results_dir + '/res_image_guess_visu.jpg', graph_visu)
 
 
     A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices, center_image)
-    res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5, xtol=1e-8, method='trf',
+    res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5, xtol=1e-8, method='trf',max_nfev=150,
                         args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
     print('performed bundle adjustement')
     plt.plot(res.fun)
+    plt.title('Residuals after bundle adjustement')
     plt.show()
     print('mean residuals= %f' % (np.mean(np.abs(res.fun))))
 
@@ -781,7 +787,7 @@ def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True):
     for i in range(len(data)):
         data_undistorted[i] = cv2.undistort(data[i], intrinsic, distCoeffs)
 
-    res_image,graph_visu = multiple_v4(data_undistorted, homographies, verbose=True,edges=edges, predecessors=predecessors,perform_blending=perform_blending,center_image=center_image)
+    res_image,graph_visu = multiple_v4(data_undistorted, homographies, verbose=True,edges=edges, predecessors=predecessors,perform_blending=False,center_image=center_image)
     cv2.imwrite(results_dir+'/res_image.jpg', res_image)
     cv2.imwrite(results_dir + '/res_image_visu.jpg', graph_visu)
 
@@ -813,8 +819,8 @@ if __name__ == '__main__':
     # %%
 
     from random import randrange
-    MAX_MATCHES = 30000
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos10"  # Enter Directory of all images
-    perform_stitching(img_dir, MAX_MATCHES, perform_blending=False)
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos10"  # Enter Directory of all images
-    perform_stitching(img_dir, MAX_MATCHES, perform_blending=False)
+    MAX_MATCHES = 50000
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos5"  # Enter Directory of all images
+    perform_stitching(img_dir, MAX_MATCHES, perform_blending=True)
+    #img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\Set_true_green"  # Enter Directory of all images
+    #perform_stitching(img_dir, MAX_MATCHES, perform_blending=True)
