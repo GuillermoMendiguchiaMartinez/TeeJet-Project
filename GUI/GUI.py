@@ -42,19 +42,20 @@ class Ui(QtWidgets.QMainWindow):
         self.zoom_slider.valueChanged.connect(self.process_zoom_slider)
 
         self.export_spray.clicked.connect(self.process_export_spray_pattern)
+        self.reset_map.clicked.connect(self.process_reset_map)
 
     def process_mouse_input(self):
         x = self.SegmentationViewer.position.x()
         y = self.SegmentationViewer.position.y()
-        self.x_label.setText('x: %d' % (x))
-        self.y_label.setText('y: %d' % (y))
+        self.x_label.setText('X: %d' % (x))
+        self.y_label.setText('Y: %d' % (y))
         if y < self.image.shape[0] and x < self.image.shape[1]:
             self.color = self.image[int(math.floor(y)), int(math.floor(x))]
-            self.color_label.setText('color: ' + (str(self.color)))
+            self.color_label.setText('Color: ' + (str(self.color)))
             if self.SegmentationViewer.buttons == QtCore.Qt.LeftButton:
                 self.position_press = (self.SegmentationViewer.position.x(), self.SegmentationViewer.position.y())
                 self.segmentation_color = self.image[int(math.floor(y)), int(math.floor(x))]
-                self.chosen_color_label.setText('chosen color: ' + (str(self.segmentation_color)))
+                self.chosen_color_label.setText('Chosen Color: ' + (str(self.segmentation_color)))
                 self.mask = segment(self.image, self.segmentation_color, (self.hue_threshold_slider.value(),self.s_v_threshold_slider.value(),self.s_v_threshold_slider.value()))
                 self.mask_downscaled = segment(self.image_downscaled, self.segmentation_color,
                                                (self.hue_threshold_slider.value(),self.s_v_threshold_slider.value(),self.s_v_threshold_slider.value()))
@@ -66,16 +67,16 @@ class Ui(QtWidgets.QMainWindow):
     def process_zoom_mouse_input(self):
         x_zoom_proportional = self.ZoomViewer.position.x() + self.zoom_position[0]
         y_zoom_proportional = self.ZoomViewer.position.y() + self.zoom_position[1]
-        self.x_label.setText('x: %d' % (x_zoom_proportional))
-        self.y_label.setText('y: %d' % (y_zoom_proportional))
+        self.x_label.setText('X: %d' % (x_zoom_proportional))
+        self.y_label.setText('Y: %d' % (y_zoom_proportional))
         if y_zoom_proportional < self.image.shape[0] and x_zoom_proportional < self.image.shape[1]:
             self.color = self.image[int(math.floor(y_zoom_proportional)), int(math.floor(x_zoom_proportional))]
 
-            self.color_label.setText('color: ' + (str(self.color)))
+            self.color_label.setText('Color: ' + (str(self.color)))
             if self.ZoomViewer.buttons == QtCore.Qt.LeftButton:
                 self.segmentation_color = self.image[
                     int(math.floor(y_zoom_proportional)), int(math.floor(x_zoom_proportional))]
-                self.chosen_color_label.setText('chosen color: ' + (str(self.segmentation_color)))
+                self.chosen_color_label.setText('Chosen Color: ' + (str(self.segmentation_color)))
                 self.mask = segment(self.image, self.segmentation_color,  (self.hue_threshold_slider.value(),self.s_v_threshold_slider.value(),self.s_v_threshold_slider.value()))
                 self.mask_downscaled = segment(self.image_downscaled, self.segmentation_color,
                                     (self.hue_threshold_slider.value(),self.s_v_threshold_slider.value(),self.s_v_threshold_slider.value()))
@@ -123,35 +124,45 @@ class Ui(QtWidgets.QMainWindow):
         self.ZoomViewer.show_zoomed_image(self.image, self.position_press, self.zoom_slider_value, self.mask)
 
     def process_export_spray_pattern(self):
-        self.exported_image = self.mask.copy()
+        self.exported_mask = self.mask.copy()
         # To create an upper bound for the used amount of liquid
-        image_dim = [3968/2, 2976/2]
-        height = 40
-        cam_fov_deg = 81.9/2
+        spray_resolution = 0.5  # Default: 0.5 m
+        image_dim = [3968, 2976]  # Size of a single image from the drone
+        height = 25
+        cam_fov_deg = 71.5/2
+
         cam_fov = math.radians(cam_fov_deg)
-        dist_real = math.tan(cam_fov) * height
-        spray_pixel = round(image_dim[0]/dist_real)
-        rounded_spray_pixel = math.floor(spray_pixel)
-        if rounded_spray_pixel % 2 == 0:
-            rounded_spray_pixel = math.ceil(spray_pixel)
-        print(spray_pixel)
-        print(rounded_spray_pixel)
-        kernel = np.ones((rounded_spray_pixel, rounded_spray_pixel), np.uint8)
-        self.exported_image = cv2.dilate(self.exported_image, kernel)
-        cv2.imwrite("image.png", self.exported_image)
-        #zero_mask = np.zeros((10, 10)).astype('uint8')
-        print('GUICheckpoint1')
-        #self.exported_mask = segment(self.exported_image, self.segmentation_color, self.hue_threshold_slider.value())
-        #print('Checkpoint2')
-        max_dim_img = max(self.exported_image.shape[0], self.exported_image.shape[1])
-        print('GUICheckpoint2')
+        width_real = math.tan(cam_fov) * height * 2
+        print('width_real: ', width_real)
+        pixels_per_m = image_dim[0]/width_real  # How much 1m corresponds to in pixels
+        print('Meters per Pixel: ', pixels_per_m)
+
+        kernel_size = int(round(pixels_per_m*spray_resolution))
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        self.exported_mask = cv2.dilate(self.exported_mask, kernel)
+        cv2.imwrite("Exported_Mask.png", self.exported_mask)
+
+        white_count = cv2.countNonZero(self.exported_mask)
+        m_squared_total = pixels_per_m ** -2 * white_count
+        print('Blue area in M^2: ', m_squared_total)
+        pesticides_amount = float(self.pesticides_lineedit.text())
+        print('Pesticides_Amount: ', pesticides_amount)
+        pesticides_estimated_total = pesticides_amount * m_squared_total
+        print('Pesticides_Estimated_Total: ', pesticides_estimated_total)
+        self.pesticides_label.setText('Estimated Amount of Pesticide: %d L' % (pesticides_estimated_total))
+
+
+        max_dim_img = max(self.exported_mask.shape[0], self.exported_mask.shape[1])
         max_dimension = 2000
         scaling_factor = max_dimension / max_dim_img
-        print('GUICheckpoint3')
-        self.exported_image = cv2.resize(self.exported_image, (
-            int(round(self.exported_image.shape[1] * scaling_factor)), int(round(self.exported_image.shape[0] * scaling_factor))))
-        print('GUICheckpoint4')
-        self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape, self.exported_image)
+        self.exported_mask = cv2.resize(self.exported_mask, (
+            int(round(self.exported_mask.shape[1] * scaling_factor)), int(round(self.exported_mask.shape[0] * scaling_factor))))
+        self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape, self.exported_mask)
+
+    def process_reset_map(self):
+        window.mapWgt.load(QtCore.QUrl('http://localhost:8866'))
+
+
 
 class MyThread(threading.Thread):
     def run(self):
