@@ -24,7 +24,7 @@
        </sizepolicy>
       </property>
       <property name="currentIndex">
-       <number>1</number>
+       <number>0</number>
       </property>
       <property name="tabsClosable">
        <bool>false</bool>
@@ -169,7 +169,7 @@
                    <string/>
                   </property>
                   <property name="pixmap">
-                   <pixmap>../../../Desktop/DrawPolygonIcon.PNG</pixmap>
+                   <pixmap>DrawPolygonIcon.PNG</pixmap>
                   </property>
                  </widget>
                 </item>
