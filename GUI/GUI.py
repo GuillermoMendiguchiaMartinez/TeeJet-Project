@@ -177,7 +177,7 @@ if __name__ == '__main__':
     window.mapWgt.setZoomFactor(1)
     window.mapWgt.load(QtCore.QUrl('http://localhost:8866'))
 
-    window.load_image(r'C:\Users\krist\PycharmProjects\TeeJet-Project\GUI\res_image.jpg')
+    window.load_image(r'res_image.jpg')
     window.SegmentationViewer.show_image(window.image_downscaled, window.mask_downscaled, window.image.shape)
     window.show()
     sys.exit(app.exec_())
