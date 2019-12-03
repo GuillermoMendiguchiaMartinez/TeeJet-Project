@@ -28,11 +28,41 @@ class View(QtWidgets.QLabel):
         self.buttons = e.buttons()
         self.onMousePressed.emit()
 
-    def show_image(self, image_downscaled, mask_red, image_org_shape, mask_blue=False):
+    def show_image(self, image_downscaled, mask_red, image_org_shape, mask_blue=False, zoom_slider_value=False, x=False, y=False,scaling_factor=False):
+        x = x*scaling_factor
+        y = y*scaling_factor
+        zoom_slider_value=int(zoom_slider_value*scaling_factor/2)
         masked_img = image_downscaled.copy()
         masked_img[mask_blue > 0] = (255, 0, 0)
         masked_img[mask_red > 0] = (0, 0, 255)
         masked_img = cv2.addWeighted(masked_img, 0.4, image_downscaled, 0.6, 0)
+
+        x_lower = int(x - zoom_slider_value)
+        x_upper = int(x + zoom_slider_value)
+        y_lower = int(y - zoom_slider_value)
+        y_upper = int(y + zoom_slider_value)
+
+        if y_lower < 0:
+            y_lower = 0
+            y_upper = y_lower + zoom_slider_value*2
+
+        if y_upper > masked_img.shape[0]:
+            y_upper = masked_img.shape[0]
+            y_lower = y_upper - zoom_slider_value*2
+
+        if x_lower < 0:
+            x_lower = 0
+            x_upper = x_lower + zoom_slider_value*2
+
+        if x_upper > masked_img.shape[1]:
+            x_upper = masked_img.shape[1]
+            x_lower = x_upper - zoom_slider_value*2
+
+        start_point=(x_lower, y_lower)
+        end_point=(x_upper, y_upper)
+
+        masked_img=cv2.rectangle(masked_img, start_point, end_point, (90, 90, 90), 3)
+
         image_converted = cv2.cvtColor(masked_img, cv2.COLOR_BGR2RGB)
 
         image_converted = QtGui.QImage(image_converted, masked_img.shape[1], masked_img.shape[0],

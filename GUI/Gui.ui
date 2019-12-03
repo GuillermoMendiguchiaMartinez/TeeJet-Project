@@ -89,7 +89,7 @@
                 </property>
                </widget>
               </item>
-              <item row="12" column="0">
+              <item row="14" column="0">
                <spacer name="verticalSpacer">
                 <property name="orientation">
                  <enum>Qt::Vertical</enum>
@@ -101,13 +101,6 @@
                  </size>
                 </property>
                </spacer>
-              </item>
-              <item row="11" column="0">
-               <widget class="QPushButton" name="reset_map">
-                <property name="text">
-                 <string>Reset Map</string>
-                </property>
-               </widget>
               </item>
               <item row="10" column="0">
                <spacer name="verticalSpacer_2">
@@ -159,7 +152,7 @@
                 <item>
                  <widget class="QLabel" name="label_3">
                   <property name="text">
-                   <string>1. Select &quot;Draw Polygon&quot;-tool.</string>
+                   <string>1. Select &quot;Draw Polygon&quot;-tool</string>
                   </property>
                  </widget>
                 </item>
@@ -175,6 +168,94 @@
                 </item>
                 <item>
                  <spacer name="horizontalSpacer">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>40</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+              <item row="12" column="0">
+               <layout class="QHBoxLayout" name="horizontalLayout_7">
+                <item>
+                 <spacer name="horizontalSpacer_3">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeType">
+                   <enum>QSizePolicy::Preferred</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>40</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+                <item>
+                 <layout class="QVBoxLayout" name="verticalLayout_2">
+                  <item>
+                   <widget class="QPushButton" name="reset_map">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Fixed" vsizetype="Maximum">
+                      <horstretch>20</horstretch>
+                      <verstretch>20</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="minimumSize">
+                     <size>
+                      <width>150</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                    <property name="text">
+                     <string>Reset Map</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <spacer name="verticalSpacer_6">
+                    <property name="orientation">
+                     <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                     <size>
+                      <width>20</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                   </spacer>
+                  </item>
+                  <item>
+                   <widget class="QPushButton" name="load_image_btn">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Fixed" vsizetype="Maximum">
+                      <horstretch>20</horstretch>
+                      <verstretch>20</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="minimumSize">
+                     <size>
+                      <width>150</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                    <property name="text">
+                     <string>Load Stitched Image</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </item>
+                <item>
+                 <spacer name="horizontalSpacer_4">
                   <property name="orientation">
                    <enum>Qt::Horizontal</enum>
                   </property>
@@ -234,35 +315,51 @@
           <item>
            <widget class="QLabel" name="x_label">
             <property name="text">
-             <string>X:</string>
+             <string>1. Left-click on an image zoomed in at the clicked location. Right-click to segment the images based on the clicked color.</string>
             </property>
            </widget>
           </item>
           <item>
            <widget class="QLabel" name="y_label">
             <property name="text">
-             <string>Y:</string>
+             <string>2. Change values of sliders to better suit the desired segmentation.</string>
             </property>
            </widget>
           </item>
           <item>
            <widget class="QLabel" name="color_label">
             <property name="text">
-             <string>Color:</string>
+             <string>3. Click &quot;Estimate Amount of Pesticide&quot; whenever the desired segmentation is reached.</string>
             </property>
            </widget>
           </item>
           <item>
            <widget class="QLabel" name="chosen_color_label">
             <property name="text">
-             <string>Chosen Color:</string>
+             <string>4. Completing step 3 displays the amount of pesticide needed to spray the area around the segmentation.</string>
             </property>
            </widget>
           </item>
           <item>
+           <spacer name="verticalSpacer_7">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeType">
+             <enum>QSizePolicy::Preferred</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
            <widget class="QLabel" name="threshold_label">
             <property name="text">
-             <string>Color Similarity:</string>
+             <string>Color Similarity (How similar the color of the other pixels in the image have to be to be included into the segmentation):</string>
             </property>
            </widget>
           </item>
@@ -285,12 +382,15 @@
           <item>
            <widget class="QLabel" name="label">
             <property name="text">
-             <string>Illumination Level:</string>
+             <string>Illumination Level (How similar the illumination of the other pixels in the image have to be to be included into the segmentation):</string>
             </property>
            </widget>
           </item>
           <item>
            <widget class="QSlider" name="s_v_threshold_slider">
+            <property name="enabled">
+             <bool>false</bool>
+            </property>
             <property name="minimum">
              <number>1</number>
             </property>
@@ -449,17 +549,27 @@
            </widget>
           </item>
           <item>
-           <widget class="QPushButton" name="export_spray">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="text">
-             <string>Estimate Amount of Pesticide</string>
-            </property>
-           </widget>
+           <layout class="QHBoxLayout" name="horizontalLayout_8">
+            <item>
+             <widget class="QPushButton" name="export_spray">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Fixed" vsizetype="Maximum">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>300</width>
+                <height>0</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>Estimate Amount of Pesticide</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </item>
          </layout>
         </item>
