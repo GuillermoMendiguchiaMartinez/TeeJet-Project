@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from Segmentation.SegmentationGuille import *
 import cv2
 
-from PyQt5 import QtCore, QtWebEngineWidgets, QtWidgets, uic
+from PyQt5 import QtCore, QtWebEngineWidgets, QtWidgets, uic, QtGui
 
 
 class Ui(QtWidgets.QMainWindow):
@@ -19,6 +19,7 @@ class Ui(QtWidgets.QMainWindow):
         self.thread.start()
         # load UI design and show the UI
         uic.loadUi('GUI.ui', self)
+        self.SegmentationViewer.setAlignment(QtCore.Qt.AlignTop)
 
         self.image = np.zeros((10, 10, 3)).astype('uint8')
         self.mask = np.zeros((10, 10)).astype('uint8')
@@ -113,11 +114,11 @@ class Ui(QtWidgets.QMainWindow):
         print(self.thread.is_alive())
         event.accept()  # let the window close
 
-    def load_image(self, image_path, max_dimension=2000):
+    def load_image(self, image_path):
         self.image = cv2.imread(image_path)
         max_dim_img = max(self.image.shape[0], self.image.shape[1])
-        if max_dim_img > max_dimension:
-            scaling_factor = max_dimension / max_dim_img
+        if max_dim_img > 2000:
+            scaling_factor = 2000 / max_dim_img
             self.image_downscaled = cv2.resize(self.image, (
                 int(round(self.image.shape[1] * scaling_factor)), int(round(self.image.shape[0] * scaling_factor))))
         else:

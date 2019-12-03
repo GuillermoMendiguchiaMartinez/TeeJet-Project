@@ -61,7 +61,7 @@ class View(QtWidgets.QLabel):
         start_point=(x_lower, y_lower)
         end_point=(x_upper, y_upper)
 
-        masked_img=cv2.rectangle(masked_img, start_point, end_point, (90, 90, 90), 3)
+        masked_img=cv2.rectangle(masked_img, start_point, end_point, (255, 255, 255), 3)
 
         image_converted = cv2.cvtColor(masked_img, cv2.COLOR_BGR2RGB)
 
