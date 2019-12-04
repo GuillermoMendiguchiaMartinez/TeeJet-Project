@@ -44,7 +44,7 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
     :param cam_fov_deg: Field of view of the camera
     :param height: Height
     :param overlap:
-    :param pixel_size
+    :param pixel_size:
     :return: waypoints Tuple of lat long [(lat_1,lon_1),...(lat_n,lon_n)] in global form.
     '''
 
@@ -78,8 +78,8 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
     print('Global2Local = ', Global2local)
 
     # Create grid cell sizes with overlap 0.5
-    cell_size_x = round(int((math.tan(cam_fov) * height * overlap)/pixel_size))
-    cell_size_y = round(int((math.tan(cam_fov) * height * overlap)/pixel_size))
+    cell_size_x = round(int((math.tan(cam_fov) * height * overlap * 2)/pixel_size))
+    cell_size_y = round(int((math.tan(cam_fov) * height * overlap * 2)/pixel_size))
 
     # Number of cells in the grid
     n_grids_x = np.ceil(dx / cell_size_x)
@@ -108,8 +108,8 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
     #print(pts)
 
     cv2.fillPoly(map_array, [pts], 1)
-#    plt.imshow(map_array, cmap='gray')
-#    plt.show()
+    plt.imshow(map_array, cmap='gray')
+    plt.show()
 
     ''' Return center points of grid'''
     count_ones=0
@@ -153,6 +153,7 @@ def waypoints(coordinates,cam_fov_deg, height, overlap,pixel_size=0.5):
     np.save("waypts.npy", latlon_wpts)
 
 if __name__ == '__main__':
-    corners = [(9.93758976, 57.04503142),(9.93810475,57.04265598),(9.94246066,57.04413262)]
+    #corners = [(9.93758976, 57.04503142),(9.93810475,57.04265598),(9.94246066,57.04413262)]
+    corners = [(57.04503142, 9.93758976), (57.04265598, 9.93810475), (57.04413262, 9.94246066)]
     waypoints(corners, 90, 25, 0.5, 0.5)
 
