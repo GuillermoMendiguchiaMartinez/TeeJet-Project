@@ -145,7 +145,7 @@ def perform_djikstra(Graph, start_index):
 
 def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inliers_only=True,
                       ransac_threshold=5, sift_threshold=0.7, verbose=True, goodmatches_threshold=4,
-                      purge_multiples=True,multi_core=False,const_weight_edge=0.1):
+                      purge_multiples=True, multi_core=False, const_weight_edge=0.1,forced_center_image=False):
     # setting up multiprocessing
     nprocs = mp.cpu_count()
     pool = mp.Pool(processes=nprocs)
@@ -197,7 +197,7 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
                     (i, idx, sift_threshold, use_inliers_only, features, goodmatches_threshold, ransac_threshold))
                 tried_connections.add((i, idx))
 
-            #pool.map is only efficient when using brute_force_matcher, if Kdetree is used it ads to much overhead to be worthwile (tripples time used)
+            # pool.map is only efficient when using brute_force_matcher, if Kdetree is used it ads to much overhead to be worthwile (tripples time used)
             if multi_core:
                 results = results + pool.map(mc_matcher, args)
             else:
@@ -219,7 +219,7 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
                 target = result[1]
                 matches = result[2]
 
-                Graph[i, target] = const_weight_edge+ 1/ len(matches)
+                Graph[i, target] = const_weight_edge + 1 / len(matches)
                 edges.append((i, target, len(matches)))
                 homography_rel = result[3]
 
@@ -301,8 +301,12 @@ def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inl
         cost, predecessors = perform_djikstra(Graph, i)
         list_of_costs.append(cost)
         list_of_predecessors.append(predecessors)
-    predecessors = list_of_predecessors[np.argmin(list_of_costs)]
     center_image = np.argmin(list_of_costs)
+    if forced_center_image!=False:
+        center_image=forced_center_image
+    predecessors = list_of_predecessors[center_image]
+
+
     print('center_image is %d' % (center_image))
 
     # create the absolute homography estimates for all images
@@ -521,7 +525,7 @@ def gauss_kernel(sigma):
 
 
 def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predecessors=False,
-                perform_blending=True,center_image=0,sigma=5,k=3):
+                perform_blending=True, center_image=0, sigma=5, k=3):
     w = list_of_images[0].shape[1]
     h = list_of_images[0].shape[0]
 
@@ -582,7 +586,6 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
     # perform image blending
     if perform_blending:
 
-
         result = [np.zeros((h_res_ds, w_res_ds, 3), dtype='float32')] * (k + 1)
         normalization = [np.zeros((h_res_ds, w_res_ds), dtype='float32')] * (k + 1)
 
@@ -596,7 +599,7 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
 
             # multi_band_blending according to http://matthewalunbrown.com/papers/ijcv2007.pdf
             x, y, dx, dy = cv2.boundingRect((closest_img_map == i + 1).astype('uint8'))
-            roi_offset=int(math.floor(3*sigma * math.sqrt(2 * k + 1)))
+            roi_offset = int(math.floor(3 * sigma * math.sqrt(2 * k + 1)))
             roi = (
                 max(0, y - roi_offset), min(h_res_ds, y + dy + roi_offset), max(0, x - roi_offset),
                 min(w_res_ds, x + dx + roi_offset))
@@ -642,7 +645,7 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
         for i in range(len(trans_img_centers)):
             trans_img_centers[i] = tuple(int(round(n / downscaling_factor)) for n in trans_img_centers[i])
             # show outlines of picture
-            thresh=closest_img_map==i+1
+            thresh = closest_img_map == i + 1
             im2, contours, hierarchy = cv2.findContours(thresh.astype('uint8'), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(graph_visualization, contours, -1, (255, 255, 255), 10)
 
@@ -653,7 +656,7 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
             position = edge[0]
             target = edge[1]
             nr_matches = edge[2]
-            line_thickness = 10+int(math.ceil(line_thickness_per_match * nr_matches))
+            line_thickness = 10 + int(math.ceil(line_thickness_per_match * nr_matches))
             if not (predecessors[position] == target or predecessors[target] == position):
                 color = (255, 0, 0)
                 cv2.line(graph_visualization, trans_img_centers[position], trans_img_centers[target], color,
@@ -664,7 +667,7 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
             position = edge[0]
             target = edge[1]
             nr_matches = edge[2]
-            line_thickness = 10+int(math.ceil(line_thickness_per_match * nr_matches))
+            line_thickness = 10 + int(math.ceil(line_thickness_per_match * nr_matches))
             if predecessors[position] == target or predecessors[target] == position:
                 color = (0, 255, 0)
                 cv2.line(graph_visualization, trans_img_centers[position], trans_img_centers[target], color,
@@ -684,9 +687,9 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
 
             cv2.putText(graph_visualization, str(i), text_origin, cv2.FONT_HERSHEY_COMPLEX, 5, (0, 0, 0), 10)
 
-        return end_result,downscaling_factor, graph_visualization
+        return end_result, downscaling_factor, graph_visualization
 
-    return end_result,downscaling_factor
+    return end_result, downscaling_factor
 
 
 def homography_from_rotation(yaw, pitch, roll, camera_matrix):
@@ -706,29 +709,30 @@ def correct_pose_Homography(yaw_gimbal, pitch_gimbal, roll_gimbal, camera_matrix
     M = homography_from_rotation(yaw_gimbal, pitch_gimbal, roll_gimbal, camera_matrix)
     return M
 
-def estimate_scale(xmp_metadata,gps_coordinates,homographies,w, fov,center_image):
-    fov=math.radians(fov)
+
+def estimate_scale(xmp_metadata, gps_coordinates, homographies, w, fov, center_image):
+    fov = math.radians(fov)
     altitude = float(xmp_metadata[center_image]['Xmp.drone-dji.RelativeAltitude'])
     roll_gimbal = float(xmp_metadata[center_image]['Xmp.drone-dji.GimbalRollDegree'])
     pitch_gimbal = float(xmp_metadata[center_image]['Xmp.drone-dji.GimbalPitchDegree'])
     pitch_gimbal = math.radians(abs(-90 - pitch_gimbal))
     roll_gimbal = math.radians(abs(roll_gimbal))
-    #correct for roll and pitch under the assumption, that the field is a perfectly straight plane
-    distance_pitch_compensated=altitude/math.cos(pitch_gimbal)
-    distance_roll_compensated=distance_pitch_compensated/math.cos(roll_gimbal)
-    horizontal_distance=distance_roll_compensated*math.tan(fov/2)*2
-    scale=horizontal_distance/w #m/px of the original image
+    # correct for roll and pitch under the assumption, that the field is a perfectly straight plane
+    distance_pitch_compensated = altitude / math.cos(pitch_gimbal)
+    distance_roll_compensated = distance_pitch_compensated / math.cos(roll_gimbal)
+    horizontal_distance = distance_roll_compensated * math.tan(fov / 2) * 2
+    scale = horizontal_distance / w  # m/px of the original image
     return scale
 
 
-
-def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True,ransac_threshold=10,sift_threshold=0.6):
+def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True, ransac_threshold=10, sift_threshold=0.6,forced_center_image=False):
     now = datetime.now()
     results_dir = now.strftime("results/%Y%m%d %H%M")
     os.mkdir(results_dir)
 
     data_path = os.path.join(img_dir, '*jpg')
     files = glob.glob(data_path)
+    f = open(results_dir + '/log.txt', "w+")
 
     # oneplus 7 pro estimated parameters
     # intrinsic = np.array([[4347.358087366480, 0, 1780.759210199340], [0, 4349.787712956160, 1518.540335312340], [0, 0, 1]])
@@ -763,7 +767,7 @@ def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True,ransac_thresho
         xmp_metadata.append(metadata.read_xmp())
         gps_coordinates.append((gps_coord['Latitude'], gps_coord['Longitude']))
 
-    w=data[0].shape[1]
+    w = data[0].shape[1]
 
     # choosing ransac threshold very high to get inliers that don't show up because of distortion (points near the edges)
     features, point_world, homographies_abs, center_image, edges, predecessors = generate_matrixes(data,
@@ -773,7 +777,7 @@ def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True,ransac_thresho
                                                                                                    ransac_threshold=ransac_threshold,
                                                                                                    use_inliers_only=True,
                                                                                                    goodmatches_threshold=10,
-                                                                                                   purge_multiples=False)
+                                                                                                   purge_multiples=False,forced_center_image=forced_center_image)
     print('generated matrixes')
 
     for i in range(len(data)):
@@ -783,14 +787,14 @@ def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True,ransac_thresho
         features, point_world, homographies_abs, intrinsic, distCoeffs, verbose=True, outlier_threshold=10)
     x0 = np.hstack((camera_params.ravel(), homographies_ba.ravel(), points_world_frame.ravel()))
 
-    res_image,_,graph_visu = multiple_v4(data, homographies_abs, verbose=True,edges=edges, predecessors=predecessors,
-                            perform_blending=False,center_image=center_image)
-    cv2.imwrite(results_dir+'/res_image_guess.jpg', res_image)
+    res_image, _, graph_visu = multiple_v4(data, homographies_abs, verbose=True, edges=edges, predecessors=predecessors,
+                                           perform_blending=False, center_image=center_image)
+    cv2.imwrite(results_dir + '/res_image_guess.jpg', res_image)
     cv2.imwrite(results_dir + '/res_image_guess_visu.jpg', graph_visu)
 
-
     A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices, center_image)
-    res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5, xtol=1e-8, method='trf',max_nfev=150,
+    res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5, xtol=1e-8, method='trf',
+                        max_nfev=150,
                         args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
     print('performed bundle adjustement')
     plt.plot(res.fun)
@@ -804,11 +808,10 @@ def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True,ransac_thresho
     for i in range(len(data)):
         data_undistorted[i] = cv2.undistort(data[i], intrinsic, distCoeffs)
 
-    res_image,_,graph_visu = multiple_v4(data_undistorted, homographies, verbose=True,edges=edges, predecessors=predecessors,perform_blending=False,center_image=center_image)
-    cv2.imwrite(results_dir+'/res_image.jpg', res_image)
+    res_image, _, graph_visu = multiple_v4(data_undistorted, homographies, verbose=True, edges=edges,
+                                           predecessors=predecessors, perform_blending=False, center_image=center_image)
+    cv2.imwrite(results_dir + '/res_image.jpg', res_image)
     cv2.imwrite(results_dir + '/res_image_visu.jpg', graph_visu)
-
-
 
     print('intrinsic matrix is:')
     print(intrinsic)
@@ -825,21 +828,33 @@ def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True,ransac_thresho
     for M in homographies:
         homograpies_abs_pose_corr.append(np.matmul(pose_correction_matrix, M))
 
-    res_image,downscaling_factor,graph_visu = multiple_v4(data_undistorted, homograpies_abs_pose_corr, verbose=True,edges=edges,predecessors=predecessors,perform_blending=perform_blending,center_image=center_image)
-    cv2.imwrite(results_dir+'/res_image_oriented.jpg', res_image)
+    res_image, downscaling_factor, graph_visu = multiple_v4(data_undistorted, homograpies_abs_pose_corr, verbose=True,
+                                                            edges=edges, predecessors=predecessors,
+                                                            perform_blending=perform_blending,
+                                                            center_image=center_image)
+    cv2.imwrite(results_dir + '/res_image_oriented.jpg', res_image)
     cv2.imwrite(results_dir + '/res_image_oriented_visu.jpg', graph_visu)
 
-    scale=estimate_scale(xmp_metadata, gps_coordinates, homograpies_abs_pose_corr,w , 66.55, center_image)
+    scale = estimate_scale(xmp_metadata, gps_coordinates, homograpies_abs_pose_corr, w, 66.55, center_image)
     print(scale)
-    print(scale*downscaling_factor)
-
+    print(scale * downscaling_factor)
+    f.write("ransac_threshold is: %f \r\n" % (ransac_threshold))
+    f.write("sift_threshold is: %f \r\n" % (sift_threshold))
+    f.write("blending enabled: %s \r\n" % (perform_blending))
+    f.write('matches per image: %d \r\n' % (MAX_MATCHES))
+    f.write('center image is: %d \r\n'%(center_image))
+    f.write("scale is: %f \r\n" % (scale))
+    f.write("scale * downscaling factor is: %f \r\n" % (scale * downscaling_factor))
+    f.close()
 
 
 if __name__ == '__main__':
     # %%
 
     from random import randrange
-    MAX_MATCHES = 25000
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos11"  # Enter Directory of all images
-    perform_stitching(img_dir, MAX_MATCHES, perform_blending=False,ransac_threshold=10,sift_threshold=0.6)
 
+    MAX_MATCHES = 25000
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos25m"  # Enter Directory of all images
+    perform_stitching(img_dir, MAX_MATCHES, perform_blending=False, ransac_threshold=10, sift_threshold=0.6,forced_center_image=45)
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos35m"  # Enter Directory of all images
+    perform_stitching(img_dir, MAX_MATCHES, perform_blending=False, ransac_threshold=10, sift_threshold=0.6,forced_center_image=27)
