@@ -111,6 +111,7 @@ class Ui(QtWidgets.QMainWindow):
         self.hue_threshold_slider.value(), self.s_v_threshold_slider.value(), self.s_v_threshold_slider.value()))
         self.mask = segment(self.image, self.segmentation_color, (
         self.hue_threshold_slider.value(), self.s_v_threshold_slider.value(), self.s_v_threshold_slider.value()))
+        self.process_calc_dilated_mask()
         self.update_seg_viewer()
         self.zoom_position = self.ZoomViewer.show_zoomed_image(self.image, self.position_press,
                                                                self.zoom_slider_value, self.mask)
@@ -145,12 +146,12 @@ class Ui(QtWidgets.QMainWindow):
     def process_zoom_slider(self):
         self.zoom_slider_value = self.zoom_slider.value()
         self.ZoomViewer.show_zoomed_image(self.image, self.position_press, self.zoom_slider_value, self.mask)
+        self.process_calc_dilated_mask()
         self.update_seg_viewer()
 
     def process_export_spray_pattern(self):
         save_path = QtWidgets.QFileDialog.getSaveFileName(self,'Save File',filter='PNG(*.PNG)')
         cv2.imwrite(save_path[0], self.mask)
-
 
     def process_calc_dilated_mask(self):
         self.dilated_mask = self.mask.copy()
@@ -185,18 +186,15 @@ class Ui(QtWidgets.QMainWindow):
         self.update_seg_viewer()
         self.tabWidget.setCurrentIndex(1)
 
-
     def update_seg_viewer(self):
         mask_blue=self.dilated_mask*self.checkBox_show_pesticide.isChecked()
         self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape, mask_blue,
                                            zoom_slider_value=self.zoom_slider_value, x=self.zoom_middle_x, y=self.zoom_middle_y,
                                            scaling_factor=self.scaling_factor)
 
-
 class MyThread(threading.Thread):
     def run(self):
         self.process = subprocess.Popen(['voila', 'mapselect.ipynb', '--port=8866', '--no-browser'])
-
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
@@ -204,7 +202,6 @@ if __name__ == '__main__':
     window = Ui()
     window.mapWgt.setZoomFactor(1)
     window.mapWgt.load(QtCore.QUrl('http://localhost:8866'))
-
     window.load_image(r'res_image.jpg')
     window.SegmentationViewer.show_image(window.image_downscaled, window.mask_downscaled, window.image.shape)
     window.show()
