@@ -86,6 +86,8 @@ class Ui(QtWidgets.QMainWindow):
             self.color = self.image[int(math.floor(y_zoom_proportional)), int(math.floor(x_zoom_proportional))]
 
             if self.ZoomViewer.buttons == QtCore.Qt.LeftButton:
+                self.zoom_middle_x = x_zoom_proportional
+                self.zoom_middle_y = y_zoom_proportional
                 self.position_press = (x_zoom_proportional, y_zoom_proportional)
                 self.zoom_position = self.ZoomViewer.show_zoomed_image(self.image, self.position_press,
                                                                        self.zoom_slider_value, self.mask)
@@ -146,7 +148,7 @@ class Ui(QtWidgets.QMainWindow):
     def process_zoom_slider(self):
         self.zoom_slider_value = self.zoom_slider.value()
         self.ZoomViewer.show_zoomed_image(self.image, self.position_press, self.zoom_slider_value, self.mask)
-        self.process_calc_dilated_mask()
+        #self.process_calc_dilated_mask()
         self.update_seg_viewer()
 
     def process_export_spray_pattern(self):

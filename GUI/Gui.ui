@@ -317,7 +317,7 @@
                 <item>
                  <widget class="QLabel" name="label_5">
                   <property name="text">
-                   <string>4. Click on the first selection to finish polygon.</string>
+                   <string>4. Click on the first created corner to finish the polygon.</string>
                   </property>
                  </widget>
                 </item>
@@ -357,7 +357,7 @@
                 <item>
                  <widget class="QLabel" name="label_4">
                   <property name="text">
-                   <string>3. Select corners of the field to create a confined area.</string>
+                   <string>3. Click corners of the field to create a confined area.</string>
                   </property>
                  </widget>
                 </item>
@@ -477,7 +477,7 @@
           <item>
            <widget class="QLabel" name="x_label">
             <property name="text">
-             <string>1. Left-click on an image to zoom in at the clicked location. Right-click to segment the image based on the clicked pixel.</string>
+             <string>1. Left-click on either image to zoom in at the clicked location. Right-click on either image to segment the image based on the clicked pixel.</string>
             </property>
            </widget>
           </item>
@@ -491,14 +491,14 @@
           <item>
            <widget class="QLabel" name="color_label">
             <property name="text">
-             <string>3. Click &quot;Estimate Amount of Pesticide&quot; whenever the desired segmentation is reached.</string>
+             <string>3. Click &quot;Show Estimated Pesticide Area&quot; to show an estimate of the maximum amount of pesticide needed to cover the segmented area.</string>
             </property>
            </widget>
           </item>
           <item>
            <widget class="QLabel" name="chosen_color_label">
             <property name="text">
-             <string>4. Completing step 3 displays the amount of pesticide needed to spray the area around the segmentation and saves it as an image file (.PNG).</string>
+             <string>4. When the desired segmentation is reached, click &quot;Save Segmentation&quot; to save the segmentation as an image file (.PNG).</string>
             </property>
            </widget>
           </item>
