@@ -3,7 +3,6 @@ import numpy as np
 import math
 import time
 import matplotlib.pyplot as plt
-import sys
 import glob
 import os
 from scipy.sparse import lil_matrix
@@ -126,6 +125,13 @@ def homography_path_iter(position, target, predecessors, homographies_rel, homog
 
 
 def perform_djikstra(Graph, start_index):
+    """
+    performs the djikstra algorithm on a graph and lets you choose a starting node
+    :param Graph: Graph that the algorithm should be performed on
+    :param start_index: starting node
+    :return: cost: cost to get to each node (-9999 for starting node or nodes that are not accesible)
+            predecesssors: predecessor node for each node
+    """
     Graph_temp = Graph.copy()
     Graph_temp[[0, start_index]] = Graph_temp[[start_index, 0]]
     Graph_temp[:, [0, start_index]] = Graph_temp[:, [start_index, 0]]
@@ -143,14 +149,35 @@ def perform_djikstra(Graph, start_index):
     return cost, predecessors
 
 
-def generate_matrixes(list_of_images, gps_coordinates, MAX_MATCHES=5000, use_inliers_only=True,
-                      ransac_threshold=5, sift_threshold=0.7, verbose=True, goodmatches_threshold=4,
-                      purge_multiples=True, multi_core=False, const_weight_edge=0.1,forced_center_image=False):
+def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, use_inliers_only=True,
+                         ransac_threshold=10, sift_threshold=0.6, verbose=True, goodmatches_threshold=4,
+                         purge_multiples=True, multi_core=False, const_weight_edge=0.1, forced_center_image=False):
+    """
+    performs the necessary actions to get a first guess stitching solution on a given set of images 
+    :param list_of_images: list of images to be stitched
+    :param gps_coordinates: gps coordinates of the images
+    :param max_keypoints: max nr. of keypoints extracted per image
+    :param use_inliers_only: if true, only the inliers of RANSAC provided by findhomography will be used for the bundle adjustment
+    :param ransac_threshold: ransac threshold width
+    :param sift_threshold: ratio between best/second best match to accept a good match
+    :param verbose:
+    :param goodmatches_threshold: how many good matches have to be found to consider a connection between 2 images viable
+    :param purge_multiples: should world points that have more than 1 point from the same image be purged
+    :param multi_core: should the matching be done using multicore.map. Inefficient when using kdetree matcher.
+    :param const_weight_edge: constant to be used in the weight calculation for djikstra
+    :param forced_center_image: if set to a number, this image will be used as
+    :return:
+    features: list of the found features of all images
+    point_world: list of the assumed world points
+    homographies_abs:
+    , center_image, edges, predecessors
+
+    """
     # setting up multiprocessing
     nprocs = mp.cpu_count()
     pool = mp.Pool(processes=nprocs)
     # setting up feature extractor and matcher
-    sift = cv2.xfeatures2d.SIFT_create(MAX_MATCHES)
+    sift = cv2.xfeatures2d.SIFT_create(max_keypoints)
     if verbose:
         print('start feature extraction')
     features = []
@@ -725,7 +752,7 @@ def estimate_scale(xmp_metadata, gps_coordinates, homographies, w, fov, center_i
     return scale
 
 
-def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True, ransac_threshold=10, sift_threshold=0.6,forced_center_image=False):
+def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6,forced_center_image=False):
     now = datetime.now()
     results_dir = now.strftime("results/%Y%m%d %H%M")
     os.mkdir(results_dir)
@@ -770,14 +797,14 @@ def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True, ransac_thresh
     w = data[0].shape[1]
 
     # choosing ransac threshold very high to get inliers that don't show up because of distortion (points near the edges)
-    features, point_world, homographies_abs, center_image, edges, predecessors = generate_matrixes(data,
-                                                                                                   gps_coordinates,
-                                                                                                   MAX_MATCHES=MAX_MATCHES,
-                                                                                                   sift_threshold=sift_threshold,
-                                                                                                   ransac_threshold=ransac_threshold,
-                                                                                                   use_inliers_only=True,
-                                                                                                   goodmatches_threshold=10,
-                                                                                                   purge_multiples=False,forced_center_image=forced_center_image)
+    features, point_world, homographies_abs, center_image, edges, predecessors = generate_first_guess(data,
+                                                                                                      gps_coordinates,
+                                                                                                      max_keypoints=max_keypoints,
+                                                                                                      sift_threshold=sift_threshold,
+                                                                                                      ransac_threshold=ransac_threshold,
+                                                                                                      use_inliers_only=True,
+                                                                                                      goodmatches_threshold=10,
+                                                                                                      purge_multiples=False, forced_center_image=forced_center_image)
     print('generated matrixes')
 
     for i in range(len(data)):
@@ -841,7 +868,7 @@ def perform_stitching(img_dir, MAX_MATCHES, perform_blending=True, ransac_thresh
     f.write("ransac_threshold is: %f \r\n" % (ransac_threshold))
     f.write("sift_threshold is: %f \r\n" % (sift_threshold))
     f.write("blending enabled: %s \r\n" % (perform_blending))
-    f.write('matches per image: %d \r\n' % (MAX_MATCHES))
+    f.write('matches per image: %d \r\n' % (max_keypoints))
     f.write('center image is: %d \r\n'%(center_image))
     f.write("scale is: %f \r\n" % (scale))
     f.write("scale * downscaling factor is: %f \r\n" % (scale * downscaling_factor))
@@ -853,8 +880,8 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    MAX_MATCHES = 25000
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos25m"  # Enter Directory of all images
-    perform_stitching(img_dir, MAX_MATCHES, perform_blending=False, ransac_threshold=10, sift_threshold=0.6,forced_center_image=45)
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos35m"  # Enter Directory of all images
-    perform_stitching(img_dir, MAX_MATCHES, perform_blending=False, ransac_threshold=10, sift_threshold=0.6,forced_center_image=27)
+    max_keypoints = 30000
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\Set_true_green"  # Enter Directory of all images
+    perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6)
+    #img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos35m"  # Enter Directory of all images
+    #perform_stitching(img_dir, max_keypoints, perform_blending=False, ransac_threshold=10, sift_threshold=0.6,forced_center_image=27)
