@@ -20,7 +20,7 @@ import copyreg
 
 def patch_cv2_pickiling():
     """
-    makes cv2 keypoints and dmatches pickable
+    makes cv2 keypoints and dmatches pickable so they can be transfered into multiprocessing.pool
     :return:
     """
 
@@ -42,7 +42,7 @@ def patch_cv2_pickiling():
 
     # Apply the bundling to pickle
     copyreg.pickle(cv2.KeyPoint().__class__, _pickle_keypoint)
-
+    #same repeated for dmatches
     def _pickle_dmatch(dmatch):  # : cv2.DMatch
         return cv2.DMatch, (
             dmatch.queryIdx,
@@ -81,7 +81,7 @@ def mc_matcher(args):
             goodmatches.append(m)
 
     print("process %d: matching %d and %d got %d matches" % (os.getpid(), position, target, len(goodmatches)))
-
+    #discrad connections that don't have enough good matches
     if len(goodmatches) < goodmatches_threshold:
         return False
 
@@ -109,6 +109,15 @@ def mc_matcher(args):
 
 
 def homography_path_iter(position, target, predecessors, homographies_rel, homography=np.eye(3)):
+    """
+    iterativly calculates the resulting absolute homography by multiplying the relative homographies along the path given by predecessors
+    :param position: index of current image
+    :param target: index of target image (normally the center_image)
+    :param predecessors: list of the predecessors for every image
+    :param homographies_rel: relative homographies
+    :param homography: homography between starting point and current point, is identity matrix if current=starting point
+    :return: absolute homography between current position and target position, if a connection exists, otherwise returns False
+    """
     if position == target:
         return homography
     elif predecessors[position] == -9999:
@@ -121,7 +130,6 @@ def homography_path_iter(position, target, predecessors, homographies_rel, homog
 
         return homography_path_iter(predecessors[position], target, predecessors, homographies_rel, homography)
 
-    return result
 
 
 def perform_djikstra(Graph, start_index):
@@ -169,8 +177,10 @@ def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, u
     :return:
     features: list of the found features of all images
     point_world: list of the assumed world points
-    homographies_abs:
-    , center_image, edges, predecessors
+    homographies_abs: list of homographies that transform the the image to the center image frame
+    center_image: image that will be used as world frame
+    edges: list of all connections between pictures with [(i,j,number of matches)]
+    predecessors: predecessor for every image, calculated by using djikstra to get the best path to the center image
 
     """
     # setting up multiprocessing
@@ -187,7 +197,6 @@ def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, u
 
         features.append(sift.detectAndCompute(img, None))
 
-    matches = {}
     homographies_rel = {}
     point_world_idx = {}
     point_world = []
@@ -213,7 +222,8 @@ def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, u
 
             else:
                 nr_connections += 1
-        print(len(closest_images_indices_unvisited))
+        if verbose:
+            print(len(closest_images_indices_unvisited))
 
         for j in range(math.ceil((len(closest_images_indices_unvisited)) / nprocs)):
             slice = closest_images_indices_unvisited[
@@ -230,6 +240,7 @@ def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, u
             else:
                 results = results + list(map(mc_matcher, args))
 
+            #decides how many imatches should be matched with the current image, depending on how many connections with the current image have allready been found
             nr_good_results = len(results) - results.count(False)
             if len(results) >= 12 and nr_connections + nr_good_results > 20:
                 break
@@ -272,9 +283,10 @@ def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, u
                             # if train is found in a point_world, query is added to that point
                             point_world[point_world_idx[train]][1].add(query)
                             if position in point_world[point_world_idx[train]][2]:
-                                print('Warning 2 points of same image added to same world point')
-                                print('query')
-                                print(point_world_idx[train])
+                                if verbose:
+                                    print('Warning 2 points of same image added to same world point')
+                                    print('query')
+                                    print(point_world_idx[train])
                                 if purge_multiples:
                                     point_world[point_world_idx[train]][3] = False
                             point_world[point_world_idx[train]][2].add(position)
@@ -284,9 +296,10 @@ def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, u
                             # if query is found in a point_world,train is added to that point
                             point_world[point_world_idx[query]][1].add(train)
                             if target in point_world[point_world_idx[query]][2]:
-                                print('Warning 2 points of same image added to same world point')
-                                print('train')
-                                print(point_world_idx[query])
+                                if verbose:
+                                    print('Warning 2 points of same image added to same world point')
+                                    print('train')
+                                    print(point_world_idx[query])
                                 if purge_multiples:
                                     point_world[point_world_idx[query]][3] = False
                             point_world[point_world_idx[query]][2].add(target)
@@ -302,9 +315,10 @@ def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, u
                                                 len(point_world[point_world_idx[train]][2])
 
                                 if sum_of_images > len(point_world[point_world_idx[query]][2]):
-                                    print('Warning 2 points of same image added to same world point')
-                                    print('merge')
-                                    print(point_world_idx[query])
+                                    if verbose:
+                                        print('Warning 2 points of same image added to same world point')
+                                        print('merge')
+                                        print(point_world_idx[query])
                                     if purge_multiples:
                                         point_world[point_world_idx[query]][3] = False
 
@@ -332,9 +346,8 @@ def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, u
     if forced_center_image!=False:
         center_image=forced_center_image
     predecessors = list_of_predecessors[center_image]
-
-
-    print('center_image is %d' % (center_image))
+    if verbose:
+        print('center_image is %d' % (center_image))
 
     # create the absolute homography estimates for all images
     homographies_abs = [None] * len(list_of_images)
@@ -354,10 +367,27 @@ def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, u
     return features, point_world, homographies_abs, center_image, edges, predecessors
 
 
-def prepare_data(features, point_world, homographies_abs, intrinsic, dist_coeffs, outlier_threshold=100, verbose=False):
+def prepare_data(features, point_world, homographies_abs, intrinsic, dist_coeffs, verbose=False):
+    """
+    prepares the data for bundle adjustment
+    :param features:the found features of the images
+    :param point_world: world points
+    :param homographies_abs: absolute homographies for all images
+    :param intrinsic: intrinsic camera parameters
+    :param dist_coeffs: distortion coefficients
+    :param verbose: if true will print out information
+    :return:
+            x0: first input vector for the bundle adjustment, containing the camera parameters, homographies and world point coordinates
+            camera_indices: camera index for every observation
+            point_indices: world point index for every observation
+            points_camera_frame: coordinates in the original image for every observation
+            n_cameras: total number of cameras-> number of images
+            n_points: total number of world points
+            n_observations: total number of observation. 1 Observation meaning 1 World point visible in 1 Image
+    """
     n_cameras = len(homographies_abs)
     n_points = len(point_world)
-    points_world_frame = np.empty(n_points * 2)
+    observations = np.empty(n_points * 2)
     camera_indices = []
     point_indices = []
     points_camera_frame = []
@@ -370,16 +400,15 @@ def prepare_data(features, point_world, homographies_abs, intrinsic, dist_coeffs
             point_indices.append(i)
             points_camera_frame.append(features[point_idx[j][0]][0][point_idx[j][1]].pt)
 
-        points_world_frame[2 * i:2 * i + 2] = point_world[i][0].astype(float)
+        observations[2 * i:2 * i + 2] = point_world[i][0].astype(float)
 
     n_observations = len(points_camera_frame)
     homographies = np.empty(n_cameras * 9)
     for i in range(n_cameras):
         homographies[9 * i:9 * i + 9] = homographies_abs[i].ravel()
 
-    # before outlier removal
 
-    x0 = np.hstack((camera_params.ravel(), homographies.ravel(), points_world_frame.ravel()))
+    x0 = np.hstack((camera_params.ravel(), homographies.ravel(), observations.ravel()))
     f0 = residuals(x0, n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
     if verbose:
         n = 9 * n_cameras + 2 * n_points + 13
@@ -396,10 +425,21 @@ def prepare_data(features, point_world, homographies_abs, intrinsic, dist_coeffs
     camera_indices_array[::2] = camera_indices
     camera_indices_array[1::2] = camera_indices
 
-    return camera_params, points_world_frame, homographies, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations
+    return x0, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations
 
 
 def residuals(params, n_cameras, n_points, n_observations, camera_indicies, point_indicies, points_camera_frame):
+    """
+    calculates the residual error after undistorting and applying the homographies
+    :param params: array containing the camera parameters, homographies and world point coordinates
+    :param n_cameras: total number of cameras-> number of images
+    :param n_points: total number of world points
+    :param n_observations: total number of observation. 1 Observation meaning 1 World point visible in 1 Image
+    :param camera_indicies: camera index for every observation
+    :param point_indicies: world point index for every observation
+    :param points_camera_frame: coordinates in the original image for every observation
+    :return: residual error for every observation (x and y axis seperatly) -> length is 2*n_observations
+    """
     intrinsic = params[:9].reshape(3, 3)
     undistort_coeffs = params[9:14]
     homographies = params[14:14 + n_cameras * 9].reshape(n_cameras, 3, 3)
@@ -416,15 +456,17 @@ def residuals(params, n_cameras, n_points, n_observations, camera_indicies, poin
     return residuals
 
 
-def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices, center_image):
+def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices, center_image,save_matrix=False):
     """
+    constructs the sparsity matrix of the jacobian. Can be used to reduce the computational cost of bundle adjustment massively
     adapted from https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
-    :param n_cameras:
-    :param n_points:
-    :param camera_indices:
-    :param point_indices:
-    :param center_image:
-    :return:
+    :param n_cameras: total number of cameras-> number of images
+    :param n_points: total number of world points
+    :param camera_indices: camera index for every observation
+    :param point_indices: world point index for every observation
+    :param center_image: chosen center image
+    :param save_matrix: should an image of the sparsity matrix be saved? (will fail for high number of observations, because not enough ram)
+    :return: sparsity matrix
     """
     camera_indices = np.array(camera_indices)
     point_indices = np.array(point_indices)
@@ -447,10 +489,11 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
         A[2 * i + 1, 14 + n_cameras * 9 + point_indices * 2 + s] = 1
     plt.spy(A)
     plt.show()
-    try:
-        cv2.imwrite('sparse.png', A.toarray() * 255)
-    except:
-        print('problem while writing sparse matrix')
+    if save_matrix:
+        try:
+            cv2.imwrite('sparse.png', A.toarray() * 255)
+        except:
+            print('problem while writing sparse matrix')
     return A
 
 
@@ -551,8 +594,23 @@ def gauss_kernel(sigma):
     return kernel
 
 
-def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predecessors=False,
-                perform_blending=True, center_image=0, sigma=5, k=3):
+def combine_images(list_of_images, homographies, verbose=False, edges=False, predecessors=False,center_image=0,
+                   perform_blending=True, sigma=5, k=3):
+    """
+    combines images based on the provided homographies
+    :param list_of_images: the images that should be combined
+    :param homographies: the absolute homographies for all images
+    :param verbose: if True will print out information
+    :param edges: the found edges between images, if both edges and predecessors are provided, a visualization of the graph will be created.
+    :param predecessors: predecessor for every image, calculated by using djikstra to get the best path to the center image
+    :param center_image: center_image, only affects hich image is marked as center in the visualization
+    :param perform_blending: if True will use multi band blending at the image borders. This might take a long time depending on the size of the combined image and the number of images
+    :param sigma: base sigma value for the multi band blending
+    :param k: number of bands to be used in the blending
+    :return:
+    end_result: combined image
+    downscaling_factor: for memory reasons the size of the combined image is limited to 10^8 pixels, are the combined images larger than that, the result will be downscaled by this downscaling factor.
+    """
     w = list_of_images[0].shape[1]
     h = list_of_images[0].shape[0]
 
@@ -720,6 +778,15 @@ def multiple_v4(list_of_images, homographies, verbose=False, edges=False, predec
 
 
 def homography_from_rotation(yaw, pitch, roll, camera_matrix):
+    """
+    constructs a homography matrix from yaw, pitch  and roll rotations.
+    the rotations are applied in the following order: roll->pitch->yaw
+    :param yaw: yaw angle in rad
+    :param pitch: pitch angle in rad
+    :param roll: roll angle in rad
+    :param camera_matrix: camera intrinsic matrix
+    :return: rotation homography matrix
+    """
     R_pitch = np.array([[1, 0, 0], [0, math.cos(pitch), -math.sin(pitch)], [0, math.sin(pitch), math.cos(pitch)]])
     R_roll = np.array([[math.cos(roll), 0, math.sin(roll)], [0, 1, 0], [-math.sin(roll), 0, math.cos(roll)]])
     R_yaw = np.array([[math.cos(yaw), -math.sin(yaw), 0], [math.sin(yaw), math.cos(yaw), 0], [0, 0, 1]])
@@ -730,6 +797,14 @@ def homography_from_rotation(yaw, pitch, roll, camera_matrix):
 
 
 def correct_pose_Homography(yaw_gimbal, pitch_gimbal, roll_gimbal, camera_matrix):
+    """
+    takes the angles read out from image metadata and creates a correction homography matrix
+    :param yaw_gimbal: yaw angle in degree, 0 degree meaning north
+    :param pitch_gimbal: pitch angle in degree, -90 degree meaning looking top down
+    :param roll_gimbal: roll angle in degree, 0 degree meaning a horizontal orientation
+    :param camera_matrix: camera intrinsic matrix
+    :return: correction homography matrix
+    """
     yaw_gimbal = math.radians(yaw_gimbal)
     pitch_gimbal = math.radians(-(-90 - pitch_gimbal))
     roll_gimbal = math.radians(roll_gimbal)
@@ -737,7 +812,15 @@ def correct_pose_Homography(yaw_gimbal, pitch_gimbal, roll_gimbal, camera_matrix
     return M
 
 
-def estimate_scale(xmp_metadata, gps_coordinates, homographies, w, fov, center_image):
+def estimate_scale(xmp_metadata,  w, fov, center_image):
+    """
+    estimates a scaling factor between real world and the center image, based on the image metadata
+    :param xmp_metadata: metadata of all images
+    :param w: width of an image
+    :param fov: horizontal field of view of the camera
+    :param center_image: index of the center image
+    :return: scaling factor in m/px
+    """
     fov = math.radians(fov)
     altitude = float(xmp_metadata[center_image]['Xmp.drone-dji.RelativeAltitude'])
     roll_gimbal = float(xmp_metadata[center_image]['Xmp.drone-dji.GimbalRollDegree'])
@@ -753,6 +836,16 @@ def estimate_scale(xmp_metadata, gps_coordinates, homographies, w, fov, center_i
 
 
 def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6,forced_center_image=False):
+    """
+    stitches the images in the img_dir together nad saves them in working directory/results/YYYYMMDD HHMM (date and time)
+    :param img_dir: directory of the iamges to be stitched
+    :param max_keypoints: number of keypoints per image
+    :param perform_blending: if True the images will be blended using multi band blending (time intensive)
+    :param ransac_threshold: Ransac threshold width
+    :param sift_threshold: ratio between best/second best match to accept a good match
+    :param forced_center_image: if set, the center image will be forced to this number
+    :return:
+    """
     now = datetime.now()
     results_dir = now.strftime("results/%Y%m%d %H%M")
     os.mkdir(results_dir)
@@ -765,21 +858,10 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     # intrinsic = np.array([[4347.358087366480, 0, 1780.759210199340], [0, 4349.787712956160, 1518.540335312340], [0, 0, 1]])
     # distCoeffs = np.array([0.0928, -0.7394, 0, 0])
 
-    # spark parameters from pix4d
-    # intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
-    # distCoeffs = np.array([0.117, -0.298, 0.001, 0,0.142])
-
-    # spark parameters from pix4d 2
+    # spark parameters estimation read out from pix4d
     intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
     distCoeffs = np.array([0.117, -0.298, 0.001, 0, 0.1420])
 
-    # spark parameters from matlab
-    # intrinsic=np.array([[2.83487803e+03, 0.00000000e+00, 2.01766421e+03],[0.00000000e+00, 2.82153143e+03, 1.41937183e+03],[0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
-    # distCoeffs = np.array([0.29440599, -1.07848387, -0.00455276, 0.00758773, 1.31108063])
-
-    # spark estimated parameters
-    # intrinsic = np.array([[3968 * 0.638904348949862, 0, 2048], [0, 2976 * 0.638904348949862, 1536], [0, 0, 1]])
-    # distCoeffs = np.array([0.06756436352714615, -0.09146430991012529, 0, 0])
     data = []
     gps_coordinates = []
     xmp_metadata = []
@@ -810,12 +892,11 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     for i in range(len(data)):
         data_undistorted.append(cv2.undistort(data[i], intrinsic, distCoeffs))
 
-    camera_params, points_world_frame, homographies_ba, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
-        features, point_world, homographies_abs, intrinsic, distCoeffs, verbose=True, outlier_threshold=10)
-    x0 = np.hstack((camera_params.ravel(), homographies_ba.ravel(), points_world_frame.ravel()))
+    x0, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
+        features, point_world, homographies_abs, intrinsic, distCoeffs, verbose=True)
 
-    res_image, _, graph_visu = multiple_v4(data, homographies_abs, verbose=True, edges=edges, predecessors=predecessors,
-                                           perform_blending=False, center_image=center_image)
+    res_image, _, graph_visu = combine_images(data, homographies_abs, verbose=True, edges=edges, predecessors=predecessors,
+                                              perform_blending=False, center_image=center_image)
     cv2.imwrite(results_dir + '/res_image_guess.jpg', res_image)
     cv2.imwrite(results_dir + '/res_image_guess_visu.jpg', graph_visu)
 
@@ -835,8 +916,8 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     for i in range(len(data)):
         data_undistorted[i] = cv2.undistort(data[i], intrinsic, distCoeffs)
 
-    res_image, _, graph_visu = multiple_v4(data_undistorted, homographies, verbose=True, edges=edges,
-                                           predecessors=predecessors, perform_blending=False, center_image=center_image)
+    res_image, _, graph_visu = combine_images(data_undistorted, homographies, verbose=True, edges=edges,
+                                              predecessors=predecessors, perform_blending=False, center_image=center_image)
     cv2.imwrite(results_dir + '/res_image.jpg', res_image)
     cv2.imwrite(results_dir + '/res_image_visu.jpg', graph_visu)
 
@@ -855,14 +936,14 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     for M in homographies:
         homograpies_abs_pose_corr.append(np.matmul(pose_correction_matrix, M))
 
-    res_image, downscaling_factor, graph_visu = multiple_v4(data_undistorted, homograpies_abs_pose_corr, verbose=True,
-                                                            edges=edges, predecessors=predecessors,
-                                                            perform_blending=perform_blending,
-                                                            center_image=center_image)
+    res_image, downscaling_factor, graph_visu = combine_images(data_undistorted, homograpies_abs_pose_corr, verbose=True,
+                                                               edges=edges, predecessors=predecessors,
+                                                               perform_blending=perform_blending,
+                                                               center_image=center_image)
     cv2.imwrite(results_dir + '/res_image_oriented.jpg', res_image)
     cv2.imwrite(results_dir + '/res_image_oriented_visu.jpg', graph_visu)
 
-    scale = estimate_scale(xmp_metadata, gps_coordinates, homograpies_abs_pose_corr, w, 66.55, center_image)
+    scale = estimate_scale(xmp_metadata, w, 66.55, center_image)
     print(scale)
     print(scale * downscaling_factor)
     f.write("ransac_threshold is: %f \r\n" % (ransac_threshold))
@@ -880,8 +961,8 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    max_keypoints = 30000
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\Set_true_green"  # Enter Directory of all images
+    max_keypoints = 50000
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos5"  # Enter Directory of all images
     perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6)
     #img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos35m"  # Enter Directory of all images
     #perform_stitching(img_dir, max_keypoints, perform_blending=False, ransac_threshold=10, sift_threshold=0.6,forced_center_image=27)
