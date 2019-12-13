@@ -158,9 +158,9 @@ class Ui(QtWidgets.QMainWindow):
     def process_calc_dilated_mask(self):
         self.dilated_mask = self.mask.copy()
         # To create an upper bound for the used amount of liquid
-        spray_resolution = 0.5  # Default: 0.5 m
+        spray_resolution = 0.5  # Default: 0.5 m; The specifies how accurate the nozzles on the sprayer are
         image_dim = [3968, 2976]  # Size of a single image from the drone
-        height = 25
+        height = 25 # This is hard-coded at the moment and should be read from a file instead.
         cam_fov_deg = 66.55 / 2
 
         cam_fov = math.radians(cam_fov_deg)
