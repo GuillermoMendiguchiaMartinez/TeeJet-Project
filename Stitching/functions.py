@@ -367,13 +367,13 @@ def generate_first_guess(list_of_images, gps_coordinates, max_keypoints=25000, u
     return features, point_world, homographies_abs, center_image, edges, predecessors
 
 
-def prepare_data(features, point_world, homographies_abs, intrinsic, dist_coeffs, verbose=False):
+def prepare_data(features, point_world, homographies_abs, camera_matrix, dist_coeffs, verbose=False):
     """
     prepares the data for bundle adjustment
     :param features:the found features of the images
     :param point_world: world points
     :param homographies_abs: absolute homographies for all images
-    :param intrinsic: intrinsic camera parameters
+    :param camera_matrix:  camera parameters
     :param dist_coeffs: distortion coefficients
     :param verbose: if true will print out information
     :return:
@@ -391,7 +391,7 @@ def prepare_data(features, point_world, homographies_abs, intrinsic, dist_coeffs
     camera_indices = []
     point_indices = []
     points_camera_frame = []
-    camera_params = np.append(intrinsic.ravel(), dist_coeffs.ravel())
+    camera_params = np.append(camera_matrix.ravel(), dist_coeffs.ravel())
 
     for i in range(len(point_world)):
         for j in range(len(point_world[i][1])):
@@ -440,15 +440,15 @@ def residuals(params, n_cameras, n_points, n_observations, camera_indicies, poin
     :param points_camera_frame: coordinates in the original image for every observation
     :return: residual error for every observation (x and y axis seperatly) -> length is 2*n_observations
     """
-    intrinsic = params[:9].reshape(3, 3)
+    camera_matrix = params[:9].reshape(3, 3)
     undistort_coeffs = params[9:14]
     homographies = params[14:14 + n_cameras * 9].reshape(n_cameras, 3, 3)
     points_world_frame = params[14 + n_cameras * 9:].reshape(n_points, 2)
 
     point_distorted = np.array(points_camera_frame).astype('float32')
-    point_undistorted = cv2.undistortPoints(point_distorted.reshape(-1, int(point_distorted.size / 2), 2), intrinsic,
+    point_undistorted = cv2.undistortPoints(point_distorted.reshape(-1, int(point_distorted.size / 2), 2), camera_matrix,
                                             undistort_coeffs,
-                                            R=np.eye(3), P=intrinsic)
+                                            R=np.eye(3), P=camera_matrix)
     residuals = np.empty(n_observations * 2)
     for i in range(n_observations):
         point_warped = apply_homography_to_point(point_undistorted[0][i], homographies[camera_indicies[i]])
@@ -473,7 +473,7 @@ def bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indice
     m = camera_indices.size * 2
     n = 14 + n_cameras * 9 + n_points * 2
     A = lil_matrix((m, n), dtype=int)
-    # camera intrinsics are same for all observations
+    # camera camera_matrixs are same for all observations
     A[:, :14] = 1
     i = np.arange(camera_indices.size)
     for s in range(9):
@@ -610,6 +610,8 @@ def combine_images(list_of_images, homographies, verbose=False, edges=False, pre
     :return:
     end_result: combined image
     downscaling_factor: for memory reasons the size of the combined image is limited to 10^8 pixels, are the combined images larger than that, the result will be downscaled by this downscaling factor.
+    trans_img_corner_center_image: transformed upper left corner of the center image (origin of the world frame)
+
     """
     w = list_of_images[0].shape[1]
     h = list_of_images[0].shape[0]
@@ -656,6 +658,8 @@ def combine_images(list_of_images, homographies, verbose=False, edges=False, pre
             corner[1] += offset_y
             corner[0] += offset_x
 
+
+
     offset = np.array([[1, 0, offset_x], [0, 1, offset_y], [0, 0, 1]])
 
     closest_img_map = closest_image_map(h_res, w_res, trans_img_centers, trans_img_corners, downscaling_factor=4,
@@ -664,6 +668,9 @@ def combine_images(list_of_images, homographies, verbose=False, edges=False, pre
     downscaling_factor = 1
     if (h_res * w_res / downscaling_factor ** 2 > 10000 ** 2):
         downscaling_factor = math.sqrt(h_res * w_res / 10000 ** 2)
+
+    trans_img_center_center_image = np.array(trans_img_centers[center_image])/downscaling_factor
+    trans_img_corner_center_image=np.array([trans_img_corners[center_image][0][0],trans_img_corners[center_image][0][1]])/downscaling_factor
 
     h_res_ds = int(round(h_res / downscaling_factor))
     w_res_ds = int(round(w_res / downscaling_factor))
@@ -772,9 +779,9 @@ def combine_images(list_of_images, homographies, verbose=False, edges=False, pre
 
             cv2.putText(graph_visualization, str(i), text_origin, cv2.FONT_HERSHEY_COMPLEX, 5, (0, 0, 0), 10)
 
-        return end_result, downscaling_factor, graph_visualization
+        return end_result, downscaling_factor,trans_img_corner_center_image,trans_img_center_center_image, graph_visualization
 
-    return end_result, downscaling_factor
+    return end_result, downscaling_factor,trans_img_corner_center_image,trans_img_center_center_image
 
 
 def homography_from_rotation(yaw, pitch, roll, camera_matrix):
@@ -784,7 +791,7 @@ def homography_from_rotation(yaw, pitch, roll, camera_matrix):
     :param yaw: yaw angle in rad
     :param pitch: pitch angle in rad
     :param roll: roll angle in rad
-    :param camera_matrix: camera intrinsic matrix
+    :param camera_matrix: camera camera_matrix matrix
     :return: rotation homography matrix
     """
     R_pitch = np.array([[1, 0, 0], [0, math.cos(pitch), -math.sin(pitch)], [0, math.sin(pitch), math.cos(pitch)]])
@@ -802,11 +809,11 @@ def correct_pose_Homography(yaw_gimbal, pitch_gimbal, roll_gimbal, camera_matrix
     :param yaw_gimbal: yaw angle in degree, 0 degree meaning north
     :param pitch_gimbal: pitch angle in degree, -90 degree meaning looking top down
     :param roll_gimbal: roll angle in degree, 0 degree meaning a horizontal orientation
-    :param camera_matrix: camera intrinsic matrix
+    :param camera_matrix: camera camera_matrix matrix
     :return: correction homography matrix
     """
     yaw_gimbal = math.radians(yaw_gimbal)
-    pitch_gimbal = math.radians(-(-90 - pitch_gimbal))
+    pitch_gimbal = math.radians((90 + pitch_gimbal))
     roll_gimbal = math.radians(roll_gimbal)
     M = homography_from_rotation(yaw_gimbal, pitch_gimbal, roll_gimbal, camera_matrix)
     return M
@@ -835,7 +842,7 @@ def estimate_scale(xmp_metadata,  w, fov, center_image):
     return scale
 
 
-def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6,forced_center_image=False):
+def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6,forced_center_image=False,show_residuals=False):
     """
     stitches the images in the img_dir together nad saves them in working directory/results/YYYYMMDD HHMM (date and time)
     :param img_dir: directory of the iamges to be stitched
@@ -846,6 +853,7 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     :param forced_center_image: if set, the center image will be forced to this number
     :return:
     """
+    start=time.time()
     now = datetime.now()
     results_dir = now.strftime("results/%Y%m%d %H%M")
     os.mkdir(results_dir)
@@ -855,11 +863,11 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     f = open(results_dir + '/log.txt', "w+")
 
     # oneplus 7 pro estimated parameters
-    # intrinsic = np.array([[4347.358087366480, 0, 1780.759210199340], [0, 4349.787712956160, 1518.540335312340], [0, 0, 1]])
+    # camera_matrix = np.array([[4347.358087366480, 0, 1780.759210199340], [0, 4349.787712956160, 1518.540335312340], [0, 0, 1]])
     # distCoeffs = np.array([0.0928, -0.7394, 0, 0])
 
     # spark parameters estimation read out from pix4d
-    intrinsic = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
+    camera_matrix = np.array([[2951, 0, 1976], [0, 2951, 1474], [0, 0, 1]])
     distCoeffs = np.array([0.117, -0.298, 0.001, 0, 0.1420])
 
     data = []
@@ -890,39 +898,66 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     print('generated matrixes')
 
     for i in range(len(data)):
-        data_undistorted.append(cv2.undistort(data[i], intrinsic, distCoeffs))
+        data_undistorted.append(cv2.undistort(data[i], camera_matrix, distCoeffs))
 
     x0, camera_indices, point_indices, points_camera_frame, n_cameras, n_points, n_observations = prepare_data(
-        features, point_world, homographies_abs, intrinsic, distCoeffs, verbose=True)
+        features, point_world, homographies_abs, camera_matrix, distCoeffs, verbose=True)
 
-    res_image, _, graph_visu = combine_images(data, homographies_abs, verbose=True, edges=edges, predecessors=predecessors,
+    res_image, downscaling_factor,trans_img_corner,trans_img_center, graph_visu = combine_images(data, homographies_abs, verbose=True, edges=edges, predecessors=predecessors,
                                               perform_blending=False, center_image=center_image)
     cv2.imwrite(results_dir + '/res_image_guess.jpg', res_image)
     cv2.imwrite(results_dir + '/res_image_guess_visu.jpg', graph_visu)
 
+    if show_residuals:
+
+        resid=residuals(x0,n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
+        points=x0[14 + n_cameras * 9:].reshape(n_points,1,2)
+        resid_array=np.zeros((n_points))
+        for i in range(int(len(resid)/2)):
+            resid_array[point_indices[i]]+=abs(resid[2*i])
+            resid_array[point_indices[i]] += abs(resid[2*i+1])
+        for i in range(len(points)):
+            cv2.circle(res_image,tuple((points[i][0]/downscaling_factor+trans_img_corner).astype("int")),10,(0,max(0,int(255-2*resid_array[i])),min(255,int(2*resid_array[i]))),-1)
+        cv2.imwrite(results_dir + '/res_image_guess_residuals.jpg', res_image)
+
+
+
+
     A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices, center_image)
     res = least_squares(residuals, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-5, xtol=1e-8, method='trf',
-                        max_nfev=150,
+                        max_nfev=200,
                         args=(n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame))
     print('performed bundle adjustement')
     plt.plot(res.fun)
     plt.title('Residuals after bundle adjustement')
     plt.show()
     print('mean residuals= %f' % (np.mean(np.abs(res.fun))))
-    intrinsic = res.x[:9].reshape(3, 3)
+    camera_matrix = res.x[:9].reshape(3, 3)
     distCoeffs = res.x[9:14]
     homographies = res.x[14:14 + n_cameras * 9].reshape(n_cameras, 3, 3)
 
     for i in range(len(data)):
-        data_undistorted[i] = cv2.undistort(data[i], intrinsic, distCoeffs)
+        data_undistorted[i] = cv2.undistort(data[i], camera_matrix, distCoeffs)
 
-    res_image, _, graph_visu = combine_images(data_undistorted, homographies, verbose=True, edges=edges,
+    res_image, downscaling_factor,trans_img_corner,trans_img_center, graph_visu = combine_images(data_undistorted, homographies, verbose=True, edges=edges,
                                               predecessors=predecessors, perform_blending=False, center_image=center_image)
     cv2.imwrite(results_dir + '/res_image.jpg', res_image)
     cv2.imwrite(results_dir + '/res_image_visu.jpg', graph_visu)
 
-    print('intrinsic matrix is:')
-    print(intrinsic)
+    if show_residuals:
+
+        resid=residuals(res.x,n_cameras, n_points, n_observations, camera_indices, point_indices, points_camera_frame)
+        points=res.x[14 + n_cameras * 9:].reshape(n_points,1,2)
+        resid_array=np.zeros((n_points))
+        for i in range(int(len(resid)/2)):
+            resid_array[point_indices[i]]+=abs(resid[2*i])
+            resid_array[point_indices[i]] += abs(resid[2*i+1])
+        for i in range(len(points)):
+            cv2.circle(res_image,tuple((points[i][0]/downscaling_factor+trans_img_corner).astype("int")),10,(0,max(0,int(255-2*resid_array[i])),min(255,int(2*resid_array[i]))),-1)
+        cv2.imwrite(results_dir + '/res_image_residuals.jpg', res_image)
+
+    print('camera_matrix matrix is:')
+    print(camera_matrix)
     print('distortion coeffs are:')
     print(distCoeffs)
 
@@ -931,12 +966,12 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     pitch_gimbal = float(xmp_metadata[center_image]['Xmp.drone-dji.GimbalPitchDegree'])
     yaw_gimbal = float(xmp_metadata[center_image]['Xmp.drone-dji.GimbalYawDegree'])
 
-    pose_correction_matrix = correct_pose_Homography(yaw_gimbal, pitch_gimbal, roll_gimbal, intrinsic)
+    pose_correction_matrix = correct_pose_Homography(yaw_gimbal, pitch_gimbal, roll_gimbal, camera_matrix)
     homograpies_abs_pose_corr = []
     for M in homographies:
         homograpies_abs_pose_corr.append(np.matmul(pose_correction_matrix, M))
 
-    res_image, downscaling_factor, graph_visu = combine_images(data_undistorted, homograpies_abs_pose_corr, verbose=True,
+    res_image, downscaling_factor,trans_img_corner,trans_img_center, graph_visu = combine_images(data_undistorted, homograpies_abs_pose_corr, verbose=True,
                                                                edges=edges, predecessors=predecessors,
                                                                perform_blending=perform_blending,
                                                                center_image=center_image)
@@ -946,13 +981,18 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     scale = estimate_scale(xmp_metadata, w, 66.55, center_image)
     print(scale)
     print(scale * downscaling_factor)
+    end=time.time()
+    runtime=end-start
+
     f.write("ransac_threshold is: %f \r\n" % (ransac_threshold))
     f.write("sift_threshold is: %f \r\n" % (sift_threshold))
     f.write("blending enabled: %s \r\n" % (perform_blending))
     f.write('matches per image: %d \r\n' % (max_keypoints))
     f.write('center image is: %d \r\n'%(center_image))
-    f.write("scale is: %f \r\n" % (scale))
-    f.write("scale * downscaling factor is: %f \r\n" % (scale * downscaling_factor))
+    f.write('center image center coordinates:%d,%d\r\n'%(trans_img_center[0],trans_img_center[1]))
+    f.write('gps location at this coordinates: lat = %f, lon = %f \r\n'%(gps_coordinates[center_image][0],gps_coordinates[center_image][1]))
+    f.write("scale is: %f m/px\r\n" % (scale * downscaling_factor))
+    f.write("runtime was : "+ time.strftime('%H:%M:%S', time.gmtime(runtime)))
     f.close()
 
 
@@ -961,8 +1001,8 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    max_keypoints = 50000
+    max_keypoints = 10000
+    #img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos25m"  # Enter Directory of all images
+    #perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6)
     img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos5"  # Enter Directory of all images
-    perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6)
-    #img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos35m"  # Enter Directory of all images
-    #perform_stitching(img_dir, max_keypoints, perform_blending=False, ransac_threshold=10, sift_threshold=0.6,forced_center_image=27)
+    perform_stitching(img_dir, max_keypoints, perform_blending=False, ransac_threshold=10, sift_threshold=0.6,show_residuals=True)
