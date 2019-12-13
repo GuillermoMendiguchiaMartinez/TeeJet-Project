@@ -163,13 +163,7 @@ class Ui(QtWidgets.QMainWindow):
         self.dilated_mask = self.mask.copy()
         # To create an upper bound for the used amount of liquid
         spray_resolution = 0.5  # Default: 0.5 m
-        image_dim = [3968, 2976]  # Size of a single image from the drone
-        height = 25
-        cam_fov_deg = 66.55 / 2
-
-        cam_fov = math.radians(cam_fov_deg)
-        width_real = math.tan(cam_fov) * height * 2
-        pixels_per_m = image_dim[0] / width_real  # How much 1m corresponds to in pixels
+        pixels_per_m = 1/self.scale # How much 1m corresponds to in pixels
         kernel_size = int(round(pixels_per_m * spray_resolution))
         kernel = np.ones((kernel_size, kernel_size), np.uint8)
         self.dilated_mask = cv2.dilate(self.dilated_mask, kernel)
@@ -188,6 +182,7 @@ class Ui(QtWidgets.QMainWindow):
 
     def process_load_image(self):
         self.image_path = QtWidgets.QFileDialog.getOpenFileName(parent=self, filter="JPG (*.jpg)")[0]
+        self.scale= QtWidgets.QInputDialog.getDouble(self,'Scale Input', 'Please enter the scale in m/px',decimals=6)[0]
         window.load_image(self.image_path)
         self.update_seg_viewer()
         self.tabWidget.setCurrentIndex(1)
@@ -199,13 +194,10 @@ class Ui(QtWidgets.QMainWindow):
                                            scaling_factor=self.scaling_factor)
     def stitch_images(self):
         image_dir=QtWidgets.QFileDialog.getExistingDirectory(parent=self)
-        self.stitch_images_btn.setText("stitching...")
-        time.sleep(0.1)
         self.image_path,self.scale=self.scale=perform_stitching(image_dir,25000,True)
         window.load_image(self.image_path)
         self.update_seg_viewer()
         self.tabWidget.setCurrentIndex(1)
-        self.stitch_images_btn.setText("Stitch Images")
 
 class MyThread(threading.Thread):
     def run(self):
