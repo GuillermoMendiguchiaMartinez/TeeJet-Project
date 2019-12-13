@@ -989,7 +989,7 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     f.write("blending enabled: %s \r\n" % (perform_blending))
     f.write('matches per image: %d \r\n' % (max_keypoints))
     f.write('center image is: %d \r\n'%(center_image))
-    f.write('center image center coordinates:%d,%d\r\n'%(trans_img_center[0],trans_img_center[1]))
+    f.write('center image center coordinates: y = %d, x = %d\r\n'%(trans_img_center[0],trans_img_center[1]))
     f.write('gps location at this coordinates: lat = %f, lon = %f \r\n'%(gps_coordinates[center_image][0],gps_coordinates[center_image][1]))
     f.write("scale is: %f m/px\r\n" % (scale * downscaling_factor))
     f.write("runtime was : "+ time.strftime('%H:%M:%S', time.gmtime(runtime)))
@@ -1003,7 +1003,7 @@ if __name__ == '__main__':
 
     from random import randrange
 
-    max_keypoints = 10000
+    max_keypoints = 50000
     #img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos25m"  # Enter Directory of all images
     #perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6)
     img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos5"  # Enter Directory of all images
