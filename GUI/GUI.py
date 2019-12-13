@@ -6,6 +6,8 @@ import math
 import matplotlib.pyplot as plt
 from Segmentation.SegmentationGuille import *
 import cv2
+from Stitching.functions import perform_stitching
+import time
 
 from PyQt5 import QtCore, QtWebEngineWidgets, QtWidgets, uic, QtGui
 
@@ -49,6 +51,8 @@ class Ui(QtWidgets.QMainWindow):
         self.reset_map.clicked.connect(self.process_reset_map)
         self.load_image_btn.clicked.connect(self.process_load_image)
         self.checkBox_show_pesticide.stateChanged.connect(self.update_seg_viewer)
+
+        self.stitch_images_btn.clicked.connect(self.stitch_images)
 
     def process_mouse_input(self):
         x = self.SegmentationViewer.position.x()
@@ -193,6 +197,15 @@ class Ui(QtWidgets.QMainWindow):
         self.SegmentationViewer.show_image(self.image_downscaled, self.mask_downscaled, self.image.shape, mask_blue,
                                            zoom_slider_value=self.zoom_slider_value, x=self.zoom_middle_x, y=self.zoom_middle_y,
                                            scaling_factor=self.scaling_factor)
+    def stitch_images(self):
+        image_dir=QtWidgets.QFileDialog.getExistingDirectory(parent=self)
+        self.stitch_images_btn.setText("stitching...")
+        time.sleep(0.1)
+        self.image_path,self.scale=self.scale=perform_stitching(image_dir,25000,True)
+        window.load_image(self.image_path)
+        self.update_seg_viewer()
+        self.tabWidget.setCurrentIndex(1)
+        self.stitch_images_btn.setText("Stitch Images")
 
 class MyThread(threading.Thread):
     def run(self):

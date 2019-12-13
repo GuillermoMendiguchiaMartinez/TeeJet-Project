@@ -855,7 +855,7 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     """
     start=time.time()
     now = datetime.now()
-    results_dir = now.strftime("results/%Y%m%d %H%M")
+    results_dir = now.strftime(img_dir+"/%Y%m%d %H%M")
     os.mkdir(results_dir)
 
     data_path = os.path.join(img_dir, '*jpg')
@@ -994,6 +994,8 @@ def perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_thre
     f.write("scale is: %f m/px\r\n" % (scale * downscaling_factor))
     f.write("runtime was : "+ time.strftime('%H:%M:%S', time.gmtime(runtime)))
     f.close()
+
+    return results_dir + '/res_image_oriented.jpg',scale*downscaling_factor
 
 
 if __name__ == '__main__':

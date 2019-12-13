@@ -261,6 +261,25 @@
                    </spacer>
                   </item>
                   <item>
+                   <widget class="QPushButton" name="stitch_images_btn">
+                    <property name="sizePolicy">
+                     <sizepolicy hsizetype="Fixed" vsizetype="Maximum">
+                      <horstretch>20</horstretch>
+                      <verstretch>20</verstretch>
+                     </sizepolicy>
+                    </property>
+                    <property name="minimumSize">
+                     <size>
+                      <width>150</width>
+                      <height>40</height>
+                     </size>
+                    </property>
+                    <property name="text">
+                     <string>Stitch Images</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
                    <widget class="QPushButton" name="load_image_btn">
                     <property name="sizePolicy">
                      <sizepolicy hsizetype="Fixed" vsizetype="Maximum">
@@ -781,7 +800,7 @@
      <x>0</x>
      <y>0</y>
      <width>1920</width>
-     <height>26</height>
+     <height>22</height>
     </rect>
    </property>
   </widget>
