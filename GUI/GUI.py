@@ -29,6 +29,7 @@ class Ui(QtWidgets.QMainWindow):
         self.image_downscaled = self.image
         self.position_press = (0, 0)
         self.zoom_slider_value = 505
+        self.scale=0.0083
         self.zoom_position = (0, 0)
         self.zoom_middle_x=False
         self.zoom_middle_y=False
