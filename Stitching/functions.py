@@ -1004,7 +1004,10 @@ if __name__ == '__main__':
     from random import randrange
 
     max_keypoints = 50000
-    #img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos25m"  # Enter Directory of all images
-    #perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6)
-    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos5"  # Enter Directory of all images
-    perform_stitching(img_dir, max_keypoints, perform_blending=False, ransac_threshold=10, sift_threshold=0.6,show_residuals=True)
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos25m"  # Enter Directory of all images
+    perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6,show_residuals=True)
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\photos35m"  # Enter Directory of all images
+    perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6,show_residuals=True)
+    max_keypoints = 25000
+    img_dir = r"C:\Users\bedab\OneDrive\AAU\TeeJet-Project\Stitching\Set_true_green"  # Enter Directory of all images
+    perform_stitching(img_dir, max_keypoints, perform_blending=True, ransac_threshold=10, sift_threshold=0.6,show_residuals=True)
