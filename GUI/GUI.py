@@ -51,7 +51,7 @@ class Ui(QtWidgets.QMainWindow):
         self.export_spray.clicked.connect(self.process_export_spray_pattern)
         self.reset_map.clicked.connect(self.process_reset_map)
         self.load_image_btn.clicked.connect(self.process_load_image)
-        self.checkBox_show_pesticide.stateChanged.connect(self.update_seg_viewer)
+        self.checkBox_show_pesticide.stateChanged.connect(self.process_pesticide_checkbox)
 
         self.stitch_images_btn.clicked.connect(self.stitch_images)
 
@@ -110,7 +110,8 @@ class Ui(QtWidgets.QMainWindow):
                 self.s_v_threshold_slider.setEnabled(True)
                 self.zoom_position = self.ZoomViewer.show_zoomed_image(self.image, self.position_press,
                                                                        self.zoom_slider_value, self.mask)
-                self.process_calc_dilated_mask()
+                if self.checkBox_show_pesticide.isChecked():
+                    self.process_calc_dilated_mask()
                 self.update_seg_viewer()
 
     def process_threshold_slider(self):
@@ -118,7 +119,8 @@ class Ui(QtWidgets.QMainWindow):
         self.hue_threshold_slider.value(), self.s_v_threshold_slider.value(), self.s_v_threshold_slider.value()))
         self.mask = segment(self.image, self.segmentation_color, (
         self.hue_threshold_slider.value(), self.s_v_threshold_slider.value(), self.s_v_threshold_slider.value()))
-        self.process_calc_dilated_mask()
+        if self.checkBox_show_pesticide.isChecked():
+            self.process_calc_dilated_mask()
         self.update_seg_viewer()
         self.zoom_position = self.ZoomViewer.show_zoomed_image(self.image, self.position_press,
                                                                self.zoom_slider_value, self.mask)
@@ -200,9 +202,14 @@ class Ui(QtWidgets.QMainWindow):
         self.update_seg_viewer()
         self.tabWidget.setCurrentIndex(1)
 
+    def process_pesticide_checkbox(self):
+        self.process_calc_dilated_mask()
+        self.update_seg_viewer()
+
+
 class MyThread(threading.Thread):
     def run(self):
-        self.process = subprocess.Popen(['voila', 'mapselect.ipynb', '--port=8866', '--no-browser'])
+        self.process = subprocess.Popen(['voila', 'mapselect.ipynb', '--port=8866', '--no-browser','--enable_nbextensions=True'])
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
